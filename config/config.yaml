@@ -1,0 +1,177 @@
+# txdot_overlay configuration
+#
+# Source service URLs and field names below were confirmed by directly
+# querying each service's ArcGIS REST metadata (?f=json) and a sample
+# attribute query. See docs/FIELD_REFERENCE.md for the full inspection
+# record. Do not add fields here without re-running
+# `python -m txdot_overlay inspect-sources` to confirm they still exist.
+
+sources:
+  districts:
+    label: "TxDOT Districts"
+    service_url: "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Districts/FeatureServer"
+    layer_id: 0
+    # Confirmed fields (2026-09-12): OBJECTID, TXDOT_DIST_ABRVN_NM, TXDOT_DIST_NBR,
+    # TXDOT_DIST_NM, TYPE, DIST_NBR, DIST_NM, DIST_ABRVN, Shape__Area,
+    # Shape__Length, Label. DIST_NM/DIST_NBR/DIST_ABRVN are the de-duplicated
+    # (non "TXDOT_" prefixed) copies and are what we use.
+    fields:
+      name: "DIST_NM"
+      number: "DIST_NBR"
+      abbreviation: "DIST_ABRVN"
+      area_type: "TYPE"
+    description_fields: ["DIST_NM", "DIST_NBR", "DIST_ABRVN", "TYPE"]
+
+  counties:
+    label: "Texas County Boundaries (Detailed)"
+    service_url: "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/Texas_County_Boundaries_Detailed/FeatureServer"
+    layer_id: 0
+    # Confirmed fields (2026-09-12): OBJECTID, GID, CMPTRL_NBR, CNTY_NM, DIST_NM,
+    # DPS_NBR, CNTY_FIPS, CNTY_NBR, DIST_NBR, MSA1990/2000/2010, GRID_OP,
+    # CREATE_DT, CREATE_NM, EDIT_DT, EDIT_NM, Shape__Area, Shape__Length.
+    # CNTY_NBR matches the roadway inventory's CO code (verified: Smith
+    # county CNTY_NBR=212 == roadway CO=212). DIST_NM/DIST_NBR already carry
+    # each county's TxDOT district, so district assignment for counties is a
+    # reliable existing attribute -- no spatial join needed.
+    fields:
+      name: "CNTY_NM"
+      number: "CNTY_NBR"
+      fips: "CNTY_FIPS"
+      district_name: "DIST_NM"
+      district_number: "DIST_NBR"
+    description_fields: ["CNTY_NM", "CNTY_FIPS", "DIST_NM"]
+
+  roadways:
+    label: "TxDOT Roadway Inventory"
+    service_url: "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Roadway_Inventory/FeatureServer"
+    layer_id: 0
+    # Confirmed fields (2026-09-12), abbreviated to the ones this project
+    # uses; the live service has 140+ inventory/asset fields not listed here.
+    # CO/DI are numeric codes (no name text on this layer) -- CO matches
+    # counties.CNTY_NBR (verified), so county/district assignment for
+    # roadways uses that attribute join first, falling back to a spatial
+    # join against county polygons only when CO/DI are missing or invalid.
+    fields:
+      county_code: "CO"
+      district_code: "DI"
+      route_id: "RIA_RTE_ID"
+      highway_full: "HWY"
+      highway_system: "HSYS"
+      highway_number: "HNUM"
+      highway_suffix: "HSUF"
+      street_name: "STE_NAM"
+      control_section: "C_SEC"
+      num_lanes: "NUM_LANES"
+      speed_limit: "SPD_MAX"
+      surface_type: "SRF_TYPE"
+      lane_miles: "LN_MILES"
+    description_fields:
+      - "HWY"
+      - "HSYS"
+      - "STE_NAM"
+      - "C_SEC"
+      - "NUM_LANES"
+      - "SPD_MAX"
+      - "LN_MILES"
+
+# Maps the roadway inventory's HSYS code to a styling/route category.
+# Confirmed HSYS values present in Smith County (2026-09-12): CR, FM, IH,
+# LS, PR, SH, SL, SS, TL, US. Codes not seen live (e.g. RM, BI/BU/BS/BF) are
+# TxDOT-documented highway-system abbreviations included defensively; any
+# code not listed here falls back to "other".
+route_classification:
+  IH: interstate            # Interstate Highway
+  US: us_highway             # US Highway
+  SH: state_highway          # State Highway
+  FM: fm_rm                  # Farm to Market Road
+  RM: fm_rm                  # Ranch to Market Road
+  SL: loop_spur_business      # State Loop
+  SS: loop_spur_business      # State Spur
+  BI: loop_spur_business      # Business Interstate
+  BU: loop_spur_business      # Business US
+  BS: loop_spur_business      # Business State
+  BF: loop_spur_business      # Business FM
+  PR: other                  # Park Road
+  CR: other                  # County Road
+  TL: other                  # Toll Road / turnpike
+  LS: other                  # Lateral/local street
+  default: other
+
+styles:
+  district_boundary:
+    line_color: "#FFC000"    # amber
+    line_width: 3.0
+    fill: false
+    fill_color: "#FFC000"
+    fill_opacity: 0.0
+  county_boundary:
+    line_color: "#CCCCCC"    # light gray
+    line_width: 1.0
+    fill: false
+    fill_color: "#CCCCCC"
+    fill_opacity: 0.0
+  routes:
+    interstate:
+      label: "Interstate"
+      line_color: "#0000FF"  # blue
+      line_width: 3.0
+    us_highway:
+      label: "US Highway"
+      line_color: "#FF0000"  # red
+      line_width: 2.5
+    state_highway:
+      label: "State Highway"
+      line_color: "#FFD700"  # gold
+      line_width: 2.0
+    fm_rm:
+      label: "FM / RM Road"
+      line_color: "#228B22"  # green
+      line_width: 1.5
+    loop_spur_business:
+      label: "Loop / Spur / Business Route"
+      line_color: "#800080"  # purple
+      line_width: 1.5
+    other:
+      label: "Other TxDOT-Maintained Road"
+      line_color: "#808080"  # gray
+      line_width: 1.0
+
+visibility_defaults:
+  district_boundaries_folder: true
+  district_placemarks: true
+  district_details_folder: false
+  district_detail_folder: false
+  county_folder: false
+  county_boundary_folder: true    # visible once its parent county folder is turned on
+  roadways_folder: true           # visible once its parent county folder is turned on
+  route_category_folder: true
+
+cache:
+  directory: "data/cache"
+  max_age_hours: 168   # 1 week
+
+output:
+  directory: "data/output"
+  master_kml_name: "master.kml"
+  single_file_kmz_name: "txdot_overlay_single_file.kmz"
+
+simplification:
+  enabled: true
+  # Degrees (WGS84). ~0.00001 deg is roughly 1m at Texas latitudes; keep this
+  # small since roadway geometry is already segmented at short intervals.
+  tolerance_degrees: 0.00002
+  # Boundary polygons (district/county) are only rendered as outlines, never
+  # used for measurement, so they tolerate coarser simplification than roads.
+  # This is applied only to the rendered placemark copy -- clipping/spatial
+  # joins always use the unsimplified source geometry. District boundaries
+  # (25 large multi-county polygons, ~287k vertices total from the source's
+  # detailed coastline data) get a coarser tolerance than individual county
+  # boundaries since they only need to look right at a statewide zoom level.
+  county_boundary_tolerance_degrees: 0.0001    # ~10m
+  district_boundary_tolerance_degrees: 0.0005  # ~50m
+
+network:
+  timeout_seconds: 30
+  max_retries: 3
+  retry_backoff_seconds: 2
+  page_size: 2000    # <= each service's maxRecordCount (confirmed: districts/roadways 2000, counties 1000)

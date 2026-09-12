@@ -1,0 +1,10 @@
+# Convenience file for `pip install -r requirements.txt`.
+# The authoritative dependency list lives in pyproject.toml.
+requests>=2.31
+geopandas>=0.14
+shapely>=2.0
+pyproj>=3.6
+simplekml>=1.3
+PyYAML>=6.0
+pytest>=8.0
+responses>=0.25

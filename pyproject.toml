@@ -1,0 +1,33 @@
+[project]
+name = "txdot-overlay"
+version = "0.1.0"
+description = "Downloads, processes, styles, and exports public TxDOT ArcGIS vector data as a Google Earth Pro overlay."
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+    "requests>=2.31",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "simplekml>=1.3",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "responses>=0.25",
+]
+
+[project.scripts]
+txdot-overlay = "txdot_overlay.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
