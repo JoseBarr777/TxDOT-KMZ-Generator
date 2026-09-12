@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import geopandas as gpd
+from shapely.validation import make_valid
 
 from txdot_overlay.logging_setup import get_logger
 
@@ -74,6 +75,22 @@ def simplify_geometry(
         tolerance_degrees, preserve_topology=True
     )
     return result
+
+
+def repair_geometry(geometry):
+    """Attempt to repair an invalid geometry with shapely's `make_valid`.
+
+    Returns the repaired geometry, or None if it is null/empty/unrepairable
+    (still invalid, or repairs to empty). Never mutates the input.
+    """
+    if geometry is None or geometry.is_empty:
+        return None
+    if geometry.is_valid:
+        return geometry
+    repaired = make_valid(geometry)
+    if repaired is None or repaired.is_empty or not repaired.is_valid:
+        return None
+    return repaired
 
 
 def drop_invalid_geometries(

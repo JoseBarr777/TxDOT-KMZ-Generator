@@ -9,26 +9,94 @@ import geopandas as gpd
 
 from txdot_overlay.acquisition.cache import DiskCache
 from txdot_overlay.acquisition.fetch import fetch_source_features
-from txdot_overlay.config import Config
-from txdot_overlay.processing.geometry import drop_invalid_geometries, geojson_to_geodataframe
+from txdot_overlay.config import Config, SourceConfig
+from txdot_overlay.logging_setup import get_logger
+from txdot_overlay.processing.diagnostics import GeometryIssue, repair_and_flag_geometries
+from txdot_overlay.processing.geometry import geojson_to_geodataframe
+
+logger = get_logger(__name__)
 
 
 def get_cache(config: Config) -> DiskCache:
     return DiskCache(config.cache_dir)
 
 
+def load_and_repair(
+    source: SourceConfig,
+    config: Config,
+    cache: DiskCache,
+    *,
+    id_field: str,
+    name_field: str,
+    where: str = "1=1",
+    force_refresh: bool = False,
+) -> tuple[gpd.GeoDataFrame, list[GeometryIssue], gpd.GeoDataFrame]:
+    """Fetch (cached) + repair-or-flag every feature's geometry.
+
+    Returns (final_gdf, issues, raw_gdf) -- `raw_gdf` is the pre-repair frame
+    exactly as downloaded, kept around so audit-data can report duplicate IDs
+    and downloaded-vs-final counts without a second fetch.
+    """
+    entry = fetch_source_features(source, config, cache, where=where, force_refresh=force_refresh)
+    raw_gdf = geojson_to_geodataframe(entry.data)
+    final_gdf, issues = repair_and_flag_geometries(
+        raw_gdf, id_field=id_field, name_field=name_field, context=source.label
+    )
+    return final_gdf, issues, raw_gdf
+
+
+def _log_issue_summary(label: str, downloaded_count: int, final_count: int, issues: list[GeometryIssue]) -> None:
+    repaired = sum(1 for i in issues if i.status == "repaired")
+    dropped = sum(1 for i in issues if i.dropped)
+    logger.info(
+        "%s: %d downloaded, %d repaired, %d dropped, %d final",
+        label,
+        downloaded_count,
+        repaired,
+        dropped,
+        final_count,
+    )
+    if dropped:
+        for issue in issues:
+            if issue.dropped:
+                logger.warning(
+                    "%s: EXCLUDED %s (id=%s): %s (%s)",
+                    label,
+                    issue.name,
+                    issue.id_value,
+                    issue.status,
+                    issue.reason,
+                )
+
+
 def load_districts(config: Config, cache: DiskCache, *, force_refresh: bool = False) -> gpd.GeoDataFrame:
     source = config.sources["districts"]
-    entry = fetch_source_features(source, config, cache, force_refresh=force_refresh)
-    gdf = geojson_to_geodataframe(entry.data)
-    return drop_invalid_geometries(gdf, context="districts")
+    fields = source.fields
+    final_gdf, issues, raw_gdf = load_and_repair(
+        source,
+        config,
+        cache,
+        id_field=fields["number"],
+        name_field=fields["name"],
+        force_refresh=force_refresh,
+    )
+    _log_issue_summary(source.label, len(raw_gdf), len(final_gdf), issues)
+    return final_gdf
 
 
 def load_counties(config: Config, cache: DiskCache, *, force_refresh: bool = False) -> gpd.GeoDataFrame:
     source = config.sources["counties"]
-    entry = fetch_source_features(source, config, cache, force_refresh=force_refresh)
-    gdf = geojson_to_geodataframe(entry.data)
-    return drop_invalid_geometries(gdf, context="counties")
+    fields = source.fields
+    final_gdf, issues, raw_gdf = load_and_repair(
+        source,
+        config,
+        cache,
+        id_field=fields["number"],
+        name_field=fields["name"],
+        force_refresh=force_refresh,
+    )
+    _log_issue_summary(source.label, len(raw_gdf), len(final_gdf), issues)
+    return final_gdf
 
 
 def load_roadways_for_county(
@@ -39,11 +107,19 @@ def load_roadways_for_county(
     force_refresh: bool = False,
 ) -> gpd.GeoDataFrame:
     source = config.sources["roadways"]
-    county_code_field = source.fields["county_code"]
-    where = f"{county_code_field} = {int(county_number)}"
-    entry = fetch_source_features(source, config, cache, where=where, force_refresh=force_refresh)
-    gdf = geojson_to_geodataframe(entry.data)
-    return drop_invalid_geometries(gdf, context=f"roadways (county={county_number})")
+    fields = source.fields
+    where = f"{fields['county_code']} = {int(county_number)}"
+    final_gdf, issues, raw_gdf = load_and_repair(
+        source,
+        config,
+        cache,
+        id_field=fields["object_id"],
+        name_field=fields["highway_full"],
+        where=where,
+        force_refresh=force_refresh,
+    )
+    _log_issue_summary(f"{source.label} (county={county_number})", len(raw_gdf), len(final_gdf), issues)
+    return final_gdf
 
 
 def find_county_row(counties: gpd.GeoDataFrame, config: Config, county_name: str):

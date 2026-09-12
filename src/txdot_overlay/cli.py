@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from txdot_overlay.commands import (
+    audit_data,
     build_all,
     build_boundaries,
     build_county,
     build_district,
     inspect_sources,
+    package_poc,
     validate_output,
 )
 from txdot_overlay.config import load_config
@@ -71,6 +74,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("validate-output", help="Sanity-check generated KML/KMZ output")
 
+    audit_parser = subparsers.add_parser(
+        "audit-data",
+        help="Report source/downloaded/duplicate/geometry/final counts for every source",
+    )
+    audit_parser.add_argument(
+        "--district",
+        action="append",
+        dest="districts",
+        help="Also audit roadway data for every county in this district; repeatable.",
+    )
+    audit_parser.add_argument(
+        "--county",
+        action="append",
+        dest="counties",
+        help="Also audit roadway data for this county; repeatable.",
+    )
+
+    package_parser = subparsers.add_parser(
+        "package-poc",
+        help="Assemble a portable directory with master.kml + one district's county KMZs",
+    )
+    package_parser.add_argument("--district", required=True, help='e.g. "Tyler"')
+    package_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Where to write the package (default: ./dist/poc_<district>)",
+    )
+
     return parser
 
 
@@ -97,6 +128,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "validate-output":
         return validate_output.run(config)
+    if args.command == "audit-data":
+        return audit_data.run(
+            config, districts_filter=args.districts, counties_filter=args.counties
+        )
+    if args.command == "package-poc":
+        output_dir = Path(args.output_dir) if args.output_dir else None
+        return package_poc.run(
+            args.district, config, output_dir=output_dir, force_refresh=args.force_refresh
+        )
 
     parser.error(f"Unknown command: {args.command}")
     return 2

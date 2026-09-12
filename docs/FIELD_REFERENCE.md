@@ -26,7 +26,9 @@ Sample (Tyler): `DIST_NM="Tyler"`, `DIST_NBR=10`, `DIST_ABRVN="TYL"`, `TYPE="Urb
 ## Texas County Boundaries (Detailed)
 
 - Service: `https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/Texas_County_Boundaries_Detailed/FeatureServer/0`
-- Geometry: Polygon, 254 features (one is geometrically invalid -- see README)
+- Geometry: Polygon, 254 features (one -- Aransas, `CNTY_NBR=4` -- is
+  source-invalid: "Nested shells". Repaired via `shapely.make_valid` before
+  render-only simplification; see README and `tests/test_county_completeness.py`)
 - Native spatial reference: EPSG:3857
 - `maxRecordCount`: 1000; supported query formats: JSON, geoJSON, PBF
 

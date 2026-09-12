@@ -14,3 +14,4 @@ data/cache/*
 !data/cache/.gitkeep
 data/output/*
 !data/output/.gitkeep
+dist/

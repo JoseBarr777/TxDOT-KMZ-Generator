@@ -16,6 +16,7 @@ sources:
     # Shape__Length, Label. DIST_NM/DIST_NBR/DIST_ABRVN are the de-duplicated
     # (non "TXDOT_" prefixed) copies and are what we use.
     fields:
+      object_id: "OBJECTID"
       name: "DIST_NM"
       number: "DIST_NBR"
       abbreviation: "DIST_ABRVN"
@@ -34,6 +35,7 @@ sources:
     # each county's TxDOT district, so district assignment for counties is a
     # reliable existing attribute -- no spatial join needed.
     fields:
+      object_id: "OBJECTID"
       name: "CNTY_NM"
       number: "CNTY_NBR"
       fips: "CNTY_FIPS"
@@ -52,6 +54,7 @@ sources:
     # roadways uses that attribute join first, falling back to a spatial
     # join against county polygons only when CO/DI are missing or invalid.
     fields:
+      object_id: "OBJECTID"
       county_code: "CO"
       district_code: "DI"
       route_id: "RIA_RTE_ID"

@@ -84,6 +84,12 @@ python -m txdot_overlay build-all --district "Tyler" --single-file-kmz
 
 # Sanity-check the generated output
 python -m txdot_overlay validate-output
+
+# Full data-integrity report: source/downloaded/duplicate/geometry/final counts
+python -m txdot_overlay audit-data --district "Tyler"
+
+# Assemble a portable directory (master.kml + one district's county KMZs)
+python -m txdot_overlay package-poc --district "Tyler"
 ```
 
 Add `-v` for debug logging and `--force-refresh` to bypass the local cache.
@@ -136,7 +142,21 @@ data/output/                 Generated KML/KMZ (gitignored)
   spatial joins always use the unsimplified source geometry. Without this,
   `master.kml` was ~11MB (287k vertices across 25 district polygons); with
   it, ~0.8MB.
-- **Known upstream data issue**: Aransas County's polygon fails a
-  geometry-validity check (self-intersecting, likely from the source's
-  detailed-coastline digitizing) and is skipped with a logged warning rather
-  than crashing the build.
+- **Known upstream data issue, repaired not dropped**: Aransas County's
+  polygon fails a geometry-validity check ("Nested shells" -- overlapping
+  parts, likely from the source's detailed-coastline digitizing). An earlier
+  version of this project silently dropped it, undercounting 254 counties as
+  253. `processing/diagnostics.py` now repairs it via `shapely.make_valid`
+  (0.06% area change, identical bounding box) and logs the repair; a feature
+  is only ever dropped -- loudly, by name and id -- if it's null, empty, or
+  genuinely unrepairable. See `docs/FIELD_REFERENCE.md` and
+  `tests/test_county_completeness.py`.
+- **`audit-data`** reports source/downloaded/duplicate/geometry/final counts
+  per source (districts and counties always; roadways when scoped with
+  `--district`/`--county`, since a full statewide roadway audit downloads
+  the same ~1M records a statewide build would).
+- **`package-poc`** copies master.kml + one district's county KMZs into a
+  clean directory and re-validates the *copy* (not the original output) to
+  confirm the relative NetworkLinks still resolve after the whole folder is
+  moved -- see `docs/ACCEPTANCE_CHECKLIST.md` for the manual Google Earth
+  Pro verification this can't automate.
