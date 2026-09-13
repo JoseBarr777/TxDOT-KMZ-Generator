@@ -12,6 +12,7 @@ from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.pipeline import (
     find_county_row,
     get_cache,
+    load_city_limits,
     load_counties,
     load_roadways_for_county,
 )
@@ -23,17 +24,42 @@ from txdot_overlay.styling.styles import build_all_styles
 logger = get_logger(__name__)
 
 
+def select_city_limits_for_county(
+    city_limits: gpd.GeoDataFrame, single_county_gdf: gpd.GeoDataFrame
+) -> gpd.GeoDataFrame:
+    """Select cities intersecting one county, clipped to its boundary.
+
+    `city_limits` (the statewide fetch) is never mutated -- the intersecting
+    rows are selected from it with their full, unclipped source geometry
+    intact, and a *separate* clipped copy is returned for rendering, so the
+    full source geometry always remains recoverable from `city_limits`
+    itself, per the "preserve full source geometry separately from
+    render-only simplification" requirement (clipping/repair below still
+    always run on the unsimplified geometry -- simplification for render
+    happens later, inside kml_builder, exactly like county boundaries).
+    """
+    if city_limits.empty:
+        return city_limits
+    matched = gpd.sjoin(city_limits, single_county_gdf[["geometry"]], predicate="intersects", how="inner")
+    selected = city_limits.loc[matched.index.unique()]
+    clipped = clip_to_polygon(selected, single_county_gdf)
+    return drop_invalid_geometries(clipped, context="city limits")
+
+
 def build_county(
     county_name: str,
     config: Config,
     *,
     counties: gpd.GeoDataFrame | None = None,
+    city_limits: gpd.GeoDataFrame | None = None,
     force_refresh: bool = False,
 ) -> Path:
     """Build and save one county's detail KMZ. Returns the path written."""
     cache = get_cache(config)
     if counties is None:
         counties = load_counties(config, cache, force_refresh=force_refresh)
+    if city_limits is None:
+        city_limits = load_city_limits(config, cache, force_refresh=force_refresh)
 
     county_fields = config.sources["counties"].fields
     county_row = find_county_row(counties, config, county_name)
@@ -57,6 +83,13 @@ def build_county(
     roadways = drop_invalid_geometries(roadways, context=f"{resolved_name} clipped roadways")
     roadways = classify_routes(roadways, config)
 
+    county_city_limits = select_city_limits_for_county(city_limits, single_county_gdf)
+    logger.info(
+        "%s County: %d city limit feature(s) selected/clipped",
+        resolved_name,
+        len(county_city_limits),
+    )
+
     if config.simplification_enabled:
         before_vertex_estimate = len(roadways)
         roadways = simplify_geometry(roadways, config.simplification_tolerance_degrees)
@@ -74,6 +107,7 @@ def build_county(
         county_attrs=county_row.to_dict(),
         county_geometry=county_row.geometry,
         roadways=roadways,
+        city_limits=county_city_limits,
         config=config,
         styles=styles,
     )

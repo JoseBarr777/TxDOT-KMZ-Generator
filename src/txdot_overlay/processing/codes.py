@@ -244,3 +244,24 @@ def is_maintained_by_state_highway_agency(rdway_maint_agcy) -> bool:
         return int(rdway_maint_agcy) == STATE_HIGHWAY_AGENCY_CODE
     except (TypeError, ValueError):
         return False
+
+
+REGIONAL_MOBILITY_AUTHORITY_CODE = 16
+
+
+def is_maintained_by_regional_mobility_authority(rdway_maint_agcy) -> bool:
+    """True only when RDWAY_MAINT_AGCY is present and decodes to code 16.
+
+    Used only to sub-classify off-system roadways (see
+    processing/classify.py's classify_other_public_roadway_category) into a
+    "Regional Mobility Authority Roads" bucket -- like
+    is_maintained_by_state_highway_agency, this is a maintenance-
+    responsibility claim from the source data, never a physical-
+    classification signal on its own.
+    """
+    if is_missing_value(rdway_maint_agcy):
+        return False
+    try:
+        return int(rdway_maint_agcy) == REGIONAL_MOBILITY_AUTHORITY_CODE
+    except (TypeError, ValueError):
+        return False

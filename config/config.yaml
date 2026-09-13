@@ -130,6 +130,41 @@ sources:
       - "LEN_SEC"
       - "LN_MILES"
 
+  # City limits: chosen over the CPA/TxGIO "Texas_City_Boundaries" layer
+  # after a side-by-side audit (docs/SOURCE_AUDIT.md) -- this TxDOT copy is
+  # on the same ArcGIS Online org as every other source this TxDOT-oriented
+  # overlay uses, and within the Tyler District bounding box it has 72
+  # cities vs. the CPA layer's 70. The two missing from CPA (Hideaway, New
+  # London) are both confirmed real incorporated cities; *why* CPA's layer
+  # omits them is an unconfirmed hypothesis (Hideaway is confirmed to levy
+  # no city sales tax, which is consistent with -- but not proof of -- a
+  # gap in a sales-tax-oriented boundary product), not an established root
+  # cause -- see docs/SOURCE_AUDIT.md. No per-feature update-date field
+  # exists on this layer (confirmed via inspect-sources-style ?f=json
+  # metadata check) -- popups cite the service-level audit date instead of
+  # a nonexistent per-feature date.
+  city_limits:
+    label: "TxDOT City Boundaries"
+    service_url: "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_City_Boundaries/FeatureServer"
+    layer_id: 0
+    fields:
+      object_id: "OBJECTID"
+      name: "CITY_NM"
+      county_seat_flag: "CNTY_SEAT_FLAG"
+      population_2022: "POP2022"
+      population_2020: "POP2020"
+    description_fields: ["CITY_NM", "CNTY_SEAT_FLAG", "POP2022"]
+
+# Parcels are intentionally NOT configured as a live source here. TxGIO's
+# candidate parcel service's anonymous `/query` operation returns an ArcGIS
+# error for every attempted request (count-only or filtered) even though it
+# advertises Query capability; only single-point `/identify` responds. A
+# parcel product must not be built on repeated /identify calls (that is not
+# a real bulk-query substitute), so parcel generation is deferred pending an
+# official bulk download (SCAD or TxGIO) rather than a live REST source --
+# see docs/SOURCE_AUDIT.md's "Deferred: future import-parcels workflow"
+# section for the planned field scope and the reasoning above.
+
 # Maps the roadway inventory's HSYS code to a styling/route category (which
 # KML folder and color a physical road gets). Grade-separated connectors
 # (RDBD_ID=GS, officially decoded "Grade Separated Connector") never reach
@@ -181,6 +216,12 @@ styles:
     fill: false
     fill_color: "#CCCCCC"
     fill_opacity: 0.0
+  city_limits_boundary:
+    line_color: "#00A0A0"    # restrained teal, distinct from county gray/district amber
+    line_width: 1.5
+    fill: true
+    fill_color: "#00A0A0"
+    fill_opacity: 0.05        # transparent fill per requirement -- outline carries the shape
   routes:
     interstate:
       label: "Interstate"
@@ -203,9 +244,33 @@ styles:
       line_color: "#800080"  # purple
       line_width: 1.5
     county_local_other:
-      label: "Local, County & Other Roads"
+      label: "Other TxDOT Roadways"
       line_color: "#808080"  # muted gray -- visually subordinate to state routes
       line_width: 1.0
+      # On-system safety-net only, as of the Other-Public-Roadways split
+      # (see docs/SOURCE_AUDIT.md-adjacent hierarchy work): every currently
+      # -known on-system HSYS code already resolves to one of the 5 named
+      # categories above, so this folder is expected to stay empty in
+      # practice -- it exists so a future/unrecognized on-system code still
+      # renders loudly instead of silently vanishing. Off-system roads
+      # (CR/LS/FD/TL) no longer land here -- see "Other Public Roadways"
+      # below.
+    county_road:
+      label: "County Roads"
+      line_color: "#B8860B"  # dark goldenrod
+      line_width: 1.0
+    city_street:
+      label: "City Streets"
+      line_color: "#4682B4"  # steel blue
+      line_width: 1.0
+    regional_mobility_authority:
+      label: "Regional Mobility Authority Roads"
+      line_color: "#8B4513"  # saddle brown
+      line_width: 1.0
+    other_unclassified:
+      label: "Other / Unclassified"
+      line_color: "#A9A9A9"  # dark gray
+      line_width: 0.8
     grade_separated_connector:
       label: "Grade-Separated Connectors"
       line_color: "#66CCCC"  # muted cyan -- deliberately faint; reference-only geometry
@@ -222,11 +287,15 @@ visibility_defaults:
   district_details_folder: false
   district_detail_folder: false
   county_folder: false
+  administrative_boundaries_folder: true   # wrapper; visible so County Boundary shows as before
   county_boundary_folder: true    # visible once its parent county folder is turned on
+  city_limits_folder: false       # hidden by default, independently toggleable from its parent
   roadways_folder: true           # visible once its parent county folder is turned on
   route_category_folder: true
-  reference_geometry_folder: false    # hidden by default -- see FIELD_REFERENCE.md
-  grade_separated_connectors_folder: false  # hidden by default even if its parent is opened
+  other_public_roadways_folder: true
+  other_public_roadway_category_folder: true
+  roadway_network_connectors_folder: true   # renamed from reference_geometry_folder
+  grade_separated_connectors_folder: true   # now visible by default -- see FIELD_REFERENCE.md
 
 cache:
   directory: "data/cache"
@@ -251,6 +320,10 @@ simplification:
   # boundaries since they only need to look right at a statewide zoom level.
   county_boundary_tolerance_degrees: 0.0001    # ~10m
   district_boundary_tolerance_degrees: 0.0005  # ~50m
+  # City limits are clipped to the county boundary using the unsimplified
+  # source geometry (same raw-vs-render split as counties/districts); this
+  # tolerance applies only to the rendered copy.
+  city_limits_boundary_tolerance_degrees: 0.0001    # ~10m, same as county boundaries
 
 network:
   timeout_seconds: 30

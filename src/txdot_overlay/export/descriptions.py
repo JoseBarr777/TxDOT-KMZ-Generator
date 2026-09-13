@@ -181,6 +181,22 @@ def _build_operations_section(attrs: dict[str, Any], fields: dict[str, str]) -> 
     return _section("Operations & Traffic", rows)
 
 
+def _render_sections_html(sections: list[PopupSection]) -> str:
+    if not sections:
+        return _wrap_cdata("<p>No attributes.</p>")
+
+    parts: list[str] = []
+    for section in sections:
+        parts.append(f"<h4>{escape(section.title, quote=True)}</h4><table>")
+        for row in section.rows:
+            parts.append(
+                f"<tr><td><b>{escape(row.label, quote=True)}</b></td>"
+                f"<td>{escape(row.value, quote=True)}</td></tr>"
+            )
+        parts.append("</table>")
+    return _wrap_cdata("".join(parts))
+
+
 def build_roadway_description_html(attrs: dict[str, Any], fields: dict[str, str]) -> str:
     """Build the grouped-section popup for one roadway placemark.
 
@@ -198,16 +214,50 @@ def build_roadway_description_html(attrs: dict[str, Any], fields: dict[str, str]
         )
         if s is not None
     ]
-    if not sections:
-        return _wrap_cdata("<p>No attributes.</p>")
+    return _render_sections_html(sections)
 
-    parts: list[str] = []
-    for section in sections:
-        parts.append(f"<h4>{escape(section.title, quote=True)}</h4><table>")
-        for row in section.rows:
-            parts.append(
-                f"<tr><td><b>{escape(row.label, quote=True)}</b></td>"
-                f"<td>{escape(row.value, quote=True)}</td></tr>"
-            )
-        parts.append("</table>")
-    return _wrap_cdata("".join(parts))
+
+CITY_LIMITS_SOURCE_NOTE = (
+    "TxDOT City Boundaries (GRID), reviewed 2026-09-12 -- see docs/SOURCE_AUDIT.md "
+    "for the source comparison. This layer's ArcGIS service exposes no "
+    "per-feature update-date attribute."
+)
+
+
+def _build_city_identity_section(attrs: dict[str, Any], fields: dict[str, str]) -> PopupSection | None:
+    rows = [
+        _row("City name", attrs.get(fields["name"])),
+        # Raw value shown as-is (not decoded into Yes/No) -- unlike the RIF-
+        # spec coded fields in processing/codes.py, this flag's exact
+        # encoding has not been independently verified against an official
+        # spec, and this project does not guess field encodings.
+        _row("County seat flag", attrs.get(fields["county_seat_flag"])),
+    ]
+    return _section("Identity", rows)
+
+
+def _build_city_population_section(attrs: dict[str, Any], fields: dict[str, str]) -> PopupSection | None:
+    row = _row("Population (2022)", attrs.get(fields["population_2022"]), format_count)
+    if row is None:
+        row = _row("Population (2020)", attrs.get(fields["population_2020"]), format_count)
+    return _section("Population", [row]) if row is not None else None
+
+
+def build_city_limits_description_html(attrs: dict[str, Any], fields: dict[str, str]) -> str:
+    """Build the grouped-section popup for one city-limits placemark.
+
+    `fields` is config.sources["city_limits"].fields. The "Source" section
+    is a fixed note, not a per-feature field -- this layer's ArcGIS service
+    has no per-feature update-date attribute (confirmed during the
+    docs/SOURCE_AUDIT.md source audit), so a per-row date is never fabricated.
+    """
+    sections = [
+        s
+        for s in (
+            _build_city_identity_section(attrs, fields),
+            _build_city_population_section(attrs, fields),
+        )
+        if s is not None
+    ]
+    sections.append(PopupSection("Source", [PopupRow("Note", CITY_LIMITS_SOURCE_NOTE)]))
+    return _render_sections_html(sections)

@@ -99,6 +99,28 @@ def load_counties(config: Config, cache: DiskCache, *, force_refresh: bool = Fal
     return final_gdf
 
 
+def load_city_limits(config: Config, cache: DiskCache, *, force_refresh: bool = False) -> gpd.GeoDataFrame:
+    """Fetch the statewide city-limits layer (1,227 features -- one page, cheap to cache).
+
+    No per-county `where` scoping: the city layer has no county-code column,
+    so county scoping happens spatially downstream (select cities
+    intersecting a county, then clip cross-county cities to its boundary) --
+    see commands/build_county.py.
+    """
+    source = config.sources["city_limits"]
+    fields = source.fields
+    final_gdf, issues, raw_gdf = load_and_repair(
+        source,
+        config,
+        cache,
+        id_field=fields["object_id"],
+        name_field=fields["name"],
+        force_refresh=force_refresh,
+    )
+    _log_issue_summary(source.label, len(raw_gdf), len(final_gdf), issues)
+    return final_gdf
+
+
 def load_roadways_for_county(
     config: Config,
     cache: DiskCache,

@@ -10,18 +10,26 @@ Structure produced (see README/docs for the full design):
           NetworkLink -> districts/<d>/<c>.kmz   (hidden, one per county)
 
     <County> (Document, districts/<d>/<c>.kmz)
-      County Boundary                           (Folder)
-        <County> polygon placemark
-      TxDOT Roadways                            (Folder)
-        <Route category> folder                 (one per physical category present)
+      Administrative Boundaries                 (Folder)
+        County Boundary                         (Folder)
+          <County> polygon placemark
+        City Limits                             (Folder, hidden by default)
+          <City> polygon placemark(s)
+      TxDOT Roadways                            (Folder; on-system only)
+        <Route category> folder                 (one per on-system category present)
           <route> line placemark(s)
-      Reference Geometry                        (Folder, hidden)
-        Grade-Separated Connectors              (Folder, hidden)
+      Other Public Roadways                     (Folder; off-system only)
+        <County Roads / City Streets / Regional Mobility Authority Roads /
+         Other-Unclassified> folder              (one per category present)
+          <route> line placemark(s)
+      Roadway Network Connectors                (Folder; visible by default)
+        Grade-Separated Connectors               (Folder, visible by default)
           <connector> line placemark(s)          (RDBD_ID=GS, officially
                                                    decoded "Grade Separated
                                                    Connector"; excluded from
-                                                   TxDOT Roadways' folders and
-                                                   from physical-road counts)
+                                                   the two roadway folders
+                                                   above and from
+                                                   physical-road counts)
 """
 from __future__ import annotations
 
@@ -32,14 +40,31 @@ import geopandas as gpd
 import simplekml
 
 from txdot_overlay.config import Config
-from txdot_overlay.export.descriptions import build_description_html, build_roadway_description_html
+from txdot_overlay.export.descriptions import (
+    build_city_limits_description_html,
+    build_description_html,
+    build_roadway_description_html,
+)
 from txdot_overlay.export.geometry_adapter import add_line_placemark, add_polygon_placemark
-from txdot_overlay.export.titles import resolve_title
+from txdot_overlay.export.titles import resolve_city_limits_title, resolve_title
 from txdot_overlay.logging_setup import get_logger
-from txdot_overlay.processing.classify import GRADE_SEPARATED_CONNECTOR_STYLE_KEY
+from txdot_overlay.processing.classify import (
+    GRADE_SEPARATED_CONNECTOR_STYLE_KEY,
+    OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER,
+    PhysicalRoadType,
+)
 from txdot_overlay.utils import slugify
 
 logger = get_logger(__name__)
+
+# physical_type values (see processing/classify.py) that belong under
+# "Other Public Roadways" rather than "TxDOT Roadways".
+_OFF_SYSTEM_PHYSICAL_TYPES = {
+    PhysicalRoadType.COUNTY_ROAD.value,
+    PhysicalRoadType.LOCAL_STREET.value,
+    PhysicalRoadType.OTHER_PHYSICAL_ROADWAY.value,
+    PhysicalRoadType.UNKNOWN.value,
+}
 
 
 def _render_geometry(geometry, tolerance_degrees: float):
@@ -52,9 +77,9 @@ def _render_geometry(geometry, tolerance_degrees: float):
         return geometry
     return geometry.simplify(tolerance_degrees, preserve_topology=True)
 
-# Physical-road categories only; grade_separated_connector is deliberately
-# excluded -- it never appears under "TxDOT Roadways", only under
-# "Reference Geometry" (see add_county_detail_content).
+# On-system physical-road categories only; grade_separated_connector and the
+# off-system "Other Public Roadways" categories are deliberately excluded --
+# they never appear under "TxDOT Roadways" (see add_county_detail_content).
 ROUTE_CATEGORY_ORDER = [
     "interstate",
     "us_highway",
@@ -163,16 +188,23 @@ def add_county_detail_content(
     county_attrs: dict[str, Any],
     county_geometry,
     roadways: gpd.GeoDataFrame,
+    city_limits: gpd.GeoDataFrame,
     config: Config,
     styles: dict[str, simplekml.Style],
 ) -> None:
-    """Add "County Boundary" + "TxDOT Roadways" folders directly under `parent_folder`.
+    """Add the full county-detail folder tree directly under `parent_folder`.
 
     Shares the same folder layout as build_county_detail_kml's Document, but
     writes into an existing container instead of a new Kml() -- used by the
-    single-file (inline, no NetworkLinks) export.
+    single-file (inline, no NetworkLinks) export. See the module docstring
+    for the full tree shape.
     """
-    boundary_folder = parent_folder.newfolder(name="County Boundary")
+    admin_folder = parent_folder.newfolder(name="Administrative Boundaries")
+    admin_folder.visibility = (
+        1 if config.visibility_defaults["administrative_boundaries_folder"] else 0
+    )
+
+    boundary_folder = admin_folder.newfolder(name="County Boundary")
     boundary_folder.visibility = (
         1 if config.visibility_defaults["county_boundary_folder"] else 0
     )
@@ -187,52 +219,117 @@ def add_county_detail_content(
         visibility=True,
     )
 
+    city_limits_folder = admin_folder.newfolder(name="City Limits")
+    city_limits_folder.visibility = (
+        1 if config.visibility_defaults["city_limits_folder"] else 0
+    )
+    _add_city_limits_placemarks(city_limits_folder, city_limits, config, styles)
+
     road_fields = config.sources["roadways"].fields
-    is_connector = roadways["route_category"] == GRADE_SEPARATED_CONNECTOR_STYLE_KEY
-    physical_roadways = roadways[~is_connector]
-    grade_separated_connectors = roadways[is_connector]
+    physical_type = roadways["physical_type"]
+    on_system_roadways = roadways[physical_type == PhysicalRoadType.STATE_HIGHWAY_SYSTEM.value]
+    off_system_roadways = roadways[physical_type.isin(_OFF_SYSTEM_PHYSICAL_TYPES)]
+    grade_separated_connectors = roadways[
+        physical_type == PhysicalRoadType.GRADE_SEPARATED_CONNECTOR.value
+    ]
 
     roadways_folder = parent_folder.newfolder(name="TxDOT Roadways")
     roadways_folder.visibility = (
         1 if config.visibility_defaults["roadways_folder"] else 0
     )
     _add_route_category_folders(
-        roadways_folder, physical_roadways, road_fields, config, styles
+        roadways_folder, on_system_roadways, road_fields, config, styles
     )
 
-    if len(grade_separated_connectors):
-        reference_folder = parent_folder.newfolder(name="Reference Geometry")
-        reference_folder.visibility = (
-            1 if config.visibility_defaults["reference_geometry_folder"] else 0
+    if len(off_system_roadways):
+        other_public_folder = parent_folder.newfolder(name="Other Public Roadways")
+        other_public_folder.visibility = (
+            1 if config.visibility_defaults["other_public_roadways_folder"] else 0
         )
-        connector_folder = reference_folder.newfolder(name="Grade-Separated Connectors")
-        connector_folder.visibility = (
+        _add_other_public_roadway_folders(
+            other_public_folder, off_system_roadways, road_fields, config, styles
+        )
+
+    if len(grade_separated_connectors):
+        connectors_folder = parent_folder.newfolder(name="Roadway Network Connectors")
+        connectors_folder.visibility = (
+            1 if config.visibility_defaults["roadway_network_connectors_folder"] else 0
+        )
+        grade_separated_folder = connectors_folder.newfolder(name="Grade-Separated Connectors")
+        grade_separated_folder.visibility = (
             1 if config.visibility_defaults["grade_separated_connectors_folder"] else 0
         )
         _add_roadway_placemarks(
-            connector_folder,
+            grade_separated_folder,
             grade_separated_connectors,
             road_fields,
             styles[f"route_{GRADE_SEPARATED_CONNECTOR_STYLE_KEY}"],
         )
 
 
+def _add_city_limits_placemarks(
+    container: Any,
+    city_limits: gpd.GeoDataFrame,
+    config: Config,
+    styles: dict[str, simplekml.Style],
+) -> None:
+    city_fields = config.sources["city_limits"].fields
+    for _, row in city_limits.iterrows():
+        if row.geometry is None or row.geometry.is_empty:
+            continue
+        attrs = row.to_dict()
+        title, _raw = resolve_city_limits_title(city_name=attrs.get(city_fields["name"]))
+        description = build_city_limits_description_html(attrs, city_fields)
+        add_polygon_placemark(
+            container,
+            name=title,
+            geometry=_render_geometry(row.geometry, config.city_limits_boundary_tolerance_degrees),
+            style=styles["city_limits_boundary"],
+            description=description,
+            visibility=True,
+        )
+
+
 def _add_route_category_folders(
     roadways_folder: Any,
-    physical_roadways: gpd.GeoDataFrame,
+    on_system_roadways: gpd.GeoDataFrame,
     road_fields: dict[str, str],
     config: Config,
     styles: dict[str, simplekml.Style],
 ) -> None:
-    present_categories = set(physical_roadways.get("route_category", []))
+    present_categories = set(on_system_roadways.get("route_category", []))
     for category in ROUTE_CATEGORY_ORDER:
         if category not in present_categories:
             continue
-        category_rows = physical_roadways[physical_roadways["route_category"] == category]
+        category_rows = on_system_roadways[on_system_roadways["route_category"] == category]
         label = config.route_styles[category].label
         category_folder = roadways_folder.newfolder(name=label)
         category_folder.visibility = (
             1 if config.visibility_defaults["route_category_folder"] else 0
+        )
+        _add_roadway_placemarks(
+            category_folder, category_rows, road_fields, styles[f"route_{category}"]
+        )
+
+
+def _add_other_public_roadway_folders(
+    other_public_folder: Any,
+    off_system_roadways: gpd.GeoDataFrame,
+    road_fields: dict[str, str],
+    config: Config,
+    styles: dict[str, simplekml.Style],
+) -> None:
+    present_categories = set(off_system_roadways.get("other_public_roadway_category", []))
+    for category in OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER:
+        if category not in present_categories:
+            continue
+        category_rows = off_system_roadways[
+            off_system_roadways["other_public_roadway_category"] == category
+        ]
+        label = config.route_styles[category].label
+        category_folder = other_public_folder.newfolder(name=label)
+        category_folder.visibility = (
+            1 if config.visibility_defaults["other_public_roadway_category_folder"] else 0
         )
         _add_roadway_placemarks(
             category_folder, category_rows, road_fields, styles[f"route_{category}"]
@@ -269,13 +366,15 @@ def build_single_file_kml(
     districts: gpd.GeoDataFrame,
     counties: gpd.GeoDataFrame,
     county_roadways: dict[str, gpd.GeoDataFrame],
+    county_city_limits: dict[str, gpd.GeoDataFrame],
     config: Config,
     styles: dict[str, simplekml.Style],
 ) -> simplekml.Kml:
     """Build one self-contained KML with everything inlined (no NetworkLinks).
 
     Intended for small-scope comparison/testing, not the statewide dataset --
-    `county_roadways` should only contain the counties actually built this run.
+    `county_roadways`/`county_city_limits` should only contain the counties
+    actually built this run.
     """
     county_fields = config.sources["counties"].fields
 
@@ -311,6 +410,7 @@ def build_single_file_kml(
                 county_attrs=county_row.to_dict(),
                 county_geometry=county_row.geometry,
                 roadways=county_roadways[county_name],
+                city_limits=county_city_limits[county_name],
                 config=config,
                 styles=styles,
             )
@@ -325,6 +425,7 @@ def build_county_detail_kml(
     county_attrs: dict[str, Any],
     county_geometry,
     roadways: gpd.GeoDataFrame,
+    city_limits: gpd.GeoDataFrame,
     config: Config,
     styles: dict[str, simplekml.Style],
 ) -> simplekml.Kml:
@@ -337,6 +438,7 @@ def build_county_detail_kml(
         county_attrs=county_attrs,
         county_geometry=county_geometry,
         roadways=roadways,
+        city_limits=city_limits,
         config=config,
         styles=styles,
     )
@@ -346,10 +448,12 @@ def build_county_detail_kml(
     logger.info(
         "%s County (%s District): %d physical roadway feature(s) exported "
         "(%d grade-separated connector segment(s) excluded from that "
-        "count, shown separately under Reference Geometry)",
+        "count, shown separately under Roadway Network Connectors); "
+        "%d city limit feature(s) exported",
         county_name,
         district_name,
         physical_count,
         connector_count,
+        len(city_limits),
     )
     return kml

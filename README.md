@@ -31,30 +31,42 @@ TxDOT Reference Overlay
 └─ District Details           (hidden by default)
    └─ <District>              (one per district, hidden)
       └─ <County>             (NetworkLink -> county KMZ, hidden)
-         ├─ County Boundary
-         ├─ TxDOT Roadways
+         ├─ Administrative Boundaries
+         │  ├─ County Boundary
+         │  └─ City Limits                 (hidden by default, independently
+         │                                   toggleable from its parent)
+         ├─ TxDOT Roadways                 (on-system roads only)
          │  ├─ Interstate / US Highway / State Highway
          │  ├─ FM / RM Road
          │  ├─ Loop / Spur / Business Route
-         │  └─ Local, County & Other Roads
-         └─ Reference Geometry            (hidden by default)
-            └─ Grade-Separated Connectors (hidden by default; RDBD_ID=GS,
-                                            officially decoded "Grade
-                                            Separated Connector" -- excluded
-                                            from physical-road counts/classification)
+         │  └─ Other TxDOT Roadways        (on-system safety-net; empty in
+         │                                   practice today, see design notes)
+         ├─ Other Public Roadways          (off-system roads, pulled out of
+         │                                   TxDOT Roadways)
+         │  ├─ County Roads
+         │  ├─ City Streets
+         │  ├─ Regional Mobility Authority Roads
+         │  └─ Other / Unclassified
+         └─ Roadway Network Connectors     (visible by default)
+            └─ Grade-Separated Connectors  (visible by default; RDBD_ID=GS,
+                                             officially decoded "Grade
+                                             Separated Connector" -- excluded
+                                             from physical-road counts/classification)
 ```
 
 ## Data sources
 
-All three sources are public TxDOT ArcGIS Online `FeatureServer` layers,
+All four sources are public TxDOT ArcGIS Online `FeatureServer` layers,
 confirmed live (see `docs/FIELD_REFERENCE.md` for the full inspection
-record and exact field names used):
+record and exact field names used; `docs/SOURCE_AUDIT.md` for why the
+TxDOT city-boundary copy was chosen over the CPA/TxGIO alternative):
 
 | Source | Layer |
 |---|---|
 | TxDOT Districts | `TxDOT_Districts/FeatureServer/0` |
 | Texas County Boundaries (Detailed) | `Texas_County_Boundaries_Detailed/FeatureServer/0` |
 | TxDOT Roadway Inventory | `TxDOT_Roadway_Inventory/FeatureServer/0` |
+| TxDOT City Boundaries | `TxDOT_City_Boundaries/FeatureServer/0` |
 
 URLs live in [`config/config.yaml`](config/config.yaml), not hardcoded in
 source, so they can be repointed (e.g. to a newer annual Roadway Inventory
@@ -114,21 +126,24 @@ src/txdot_overlay/
   values.py                  Missing/suspicious-value classification (shared by popups + audit)
   acquisition/               ArcGIS REST client, metadata inspection, disk cache, fetch+cache glue
   processing/
-    codes.py                  Coded-value decode tables (HSYS, ADMIN, HWY_STAT, ...)
-    classify.py                Physical-type taxonomy + grade-separated-connector detection + route styling category
+    codes.py                  Coded-value decode tables (HSYS, ADMIN, HWY_STAT, ...) + maintenance-agency checks
+    classify.py                Physical-type taxonomy, on/off-system split, route styling category, and
+                                 Other-Public-Roadways sub-classification (County/City/RMA/Other)
     diagnostics.py              Geometry repair-or-flag, duplicate-id checks, SourceAudit
     value_audit.py               Field-level null/suspicious-value tallies (read-only)
     geometry.py, assignment.py   CRS handling, clipping/simplification, county/district assignment
   styling/                   #RRGGBB -> KML aabbggrr color conversion, simplekml Style construction
   export/
-    titles.py                  Placemark title fallback order + highway-number formatting
+    titles.py                  Placemark title fallback order + highway-number formatting (roadways/city limits)
     formatting.py                Clean numeric formatting (units, thousands separators)
-    descriptions.py               Grouped, conditional-section popup HTML (+ flat table for boundaries)
+    descriptions.py               Grouped, conditional-section popup HTML (roadways, city limits; + flat
+                                    table for district/county boundaries)
     kml_builder.py, geometry_adapter.py, kmz_writer.py, validate.py
   commands/                  One module per CLI subcommand
   pipeline.py                Shared "fetch (cached) -> repaired GeoDataFrame" helpers
   cli.py                     argparse subcommand wiring
 docs/FIELD_REFERENCE.md      Live-inspected fields/metadata, coded-value tables, the NaN trace
+docs/SOURCE_AUDIT.md         County/city-boundary source comparison and the deferred parcel-import plan
 docs/ACCEPTANCE_CHECKLIST.md Manual Google Earth Pro verification checklist
 tests/                       pytest suite
 data/cache/                  Cached ArcGIS responses (gitignored)
@@ -194,14 +209,30 @@ dist/                        package-poc output, audit-data JSON reports (gitign
 - **Grade-separated connectors (`RDBD_ID=GS`, officially decoded "Grade
   Separated Connector") are never shown as ordinary roads.** They're
   retained (never dropped), excluded from physical-road counts and
-  classification, and placed under a hidden-by-default `Reference Geometry
-  > Grade-Separated Connectors` folder in a muted style. The field
-  originally assumed to identify these (`HWY_STAT`) turned out not to --
-  see `docs/FIELD_REFERENCE.md`. This category was previously named
+  classification, and placed under a visible-by-default `Roadway Network
+  Connectors > Grade-Separated Connectors` folder in a muted style. The
+  field originally assumed to identify these (`HWY_STAT`) turned out not
+  to -- see `docs/FIELD_REFERENCE.md`. This category was previously named
   "artificial centerline"; that name is retired because no official
   current TxDOT source was found asserting that every `GS` record is
   classified by TxDOT as an "Artificial Centerline" -- see
   `processing/classify.py`'s module docstring.
+- **On-system and off-system roadways get separate top-level folders.**
+  `TxDOT Roadways` now holds only records whose HSYS code is part of the
+  state highway system (`processing/classify.py`'s `PhysicalRoadType.
+  STATE_HIGHWAY_SYSTEM`); everything off-system (County Road, (Local) City
+  Street, and the small Federal-Road/Off-System-Toll-Road remainder) is
+  pulled out into a sibling `Other Public Roadways` folder, further split
+  into County Roads / City Streets / Regional Mobility Authority Roads /
+  Other-Unclassified. The RMA split uses the same verified `RDWAY_MAINT_AGCY`
+  field this project already uses for maintenance-agency questions (code 16)
+  -- it never overrides the on/off-system split itself, which comes from
+  HSYS alone.
+- **City Limits is a new, independently toggleable layer**, sourced from
+  TxDOT's own `TxDOT_City_Boundaries` layer rather than the Comptroller/TxGIO
+  copy -- see `docs/SOURCE_AUDIT.md` for the side-by-side comparison and why
+  the TxDOT copy was chosen. It lives under a new `Administrative Boundaries`
+  folder alongside `County Boundary`, hidden by default.
 
 **Safety note**: this overlay is an informational screening/reference tool.
 `HSYS`, `RDWAY_MAINT_AGCY`, `ROW_MIN`, inclusion in the Roadway Inventory,

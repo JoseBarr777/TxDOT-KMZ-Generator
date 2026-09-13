@@ -50,6 +50,7 @@ def build_all_styles(config: Config) -> dict[str, simplekml.Style]:
     styles: dict[str, simplekml.Style] = {
         "district_boundary": polygon_style(config.district_style),
         "county_boundary": polygon_style(config.county_style),
+        "city_limits_boundary": polygon_style(config.city_limits_style),
     }
     for category, route_cfg in config.route_styles.items():
         styles[f"route_{category}"] = route_style(route_cfg)

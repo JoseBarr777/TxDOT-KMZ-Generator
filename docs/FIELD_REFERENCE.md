@@ -464,6 +464,39 @@ Tyler District's own data has no such characters today, so this did not
 affect the Tyler POC's correctness, but the fix applies everywhere text
 reaches KML, not just where the bug was first found.
 
+## City Limits
+
+Source: `TxDOT_City_Boundaries` (`services.arcgis.com/KTcxiTD9dsQw4r7Z/.../TxDOT_City_Boundaries/FeatureServer/0`)
+-- chosen over the Comptroller/TxGIO `Texas_City_Boundaries` layer after a
+side-by-side comparison; see `docs/SOURCE_AUDIT.md` for the full
+inspection, counts, and the reasoning (it's more complete for the Tyler
+District, and is on the same ArcGIS Online org as every other source this
+project uses).
+
+| Field | Type | Used as |
+|---|---|---|
+| `OBJECTID` | OID | Feature identifier |
+| `CITY_NM` | String | City name -- placemark title, popup Identity section |
+| `CNTY_SEAT_FLAG` | String | Shown as-is in the popup, not decoded -- its exact encoding is not independently verified against an official spec, and this project does not guess field encodings the way it does for RIF-spec fields |
+| `POP2022` / `POP2020` | Integer | Popup Population section -- POP2022 shown when present, falling back to POP2020 |
+| `TXDOT_CITY_NBR` | Integer | GRID-internal city identifier -- not used by this project (no GRID integration) |
+| `CITY_FIPS` | String | Not currently used |
+
+No per-feature update-date field exists on this layer (confirmed via its
+`?f=json` metadata) -- the popup's "Source" section is a fixed note citing
+the service and the date of the `docs/SOURCE_AUDIT.md` comparison, not a
+per-feature attribute.
+
+Selection is spatial, not attribute-based: the statewide layer has no
+county-code column, so each county's cities are selected by intersecting
+its boundary polygon, then clipped to that boundary for cross-county cities
+-- same raw-vs-render-simplified split as county/district boundaries (see
+"Two simplification tiers" above).
+
+**Not a legal record**: like the roadway/county sources, this layer is not
+evidence of a legal annexation boundary or municipal jurisdiction beyond
+what TxDOT's own source data claims.
+
 ## Proof-of-concept scope
 
 - All 25 TxDOT district boundaries

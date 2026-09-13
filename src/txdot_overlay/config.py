@@ -47,6 +47,7 @@ class Config:
     route_classification: dict[str, str]
     district_style: PolygonStyleConfig
     county_style: PolygonStyleConfig
+    city_limits_style: PolygonStyleConfig
     route_styles: dict[str, RouteStyleConfig]
     visibility_defaults: dict[str, bool]
     cache_dir: Path
@@ -58,6 +59,7 @@ class Config:
     simplification_tolerance_degrees: float
     county_boundary_tolerance_degrees: float
     district_boundary_tolerance_degrees: float
+    city_limits_boundary_tolerance_degrees: float
     network_timeout_seconds: float
     network_max_retries: int
     network_retry_backoff_seconds: float
@@ -132,6 +134,7 @@ def load_config(path: Path | str | None = None) -> Config:
             },
             district_style=_parse_polygon_style(styles["district_boundary"]),
             county_style=_parse_polygon_style(styles["county_boundary"]),
+            city_limits_style=_parse_polygon_style(styles["city_limits_boundary"]),
             route_styles=route_styles,
             visibility_defaults=dict(raw["visibility_defaults"]),
             cache_dir=cache_dir,
@@ -148,6 +151,9 @@ def load_config(path: Path | str | None = None) -> Config:
             ),
             district_boundary_tolerance_degrees=float(
                 raw["simplification"]["district_boundary_tolerance_degrees"]
+            ),
+            city_limits_boundary_tolerance_degrees=float(
+                raw["simplification"]["city_limits_boundary_tolerance_degrees"]
             ),
             network_timeout_seconds=float(raw["network"]["timeout_seconds"]),
             network_max_retries=int(raw["network"]["max_retries"]),

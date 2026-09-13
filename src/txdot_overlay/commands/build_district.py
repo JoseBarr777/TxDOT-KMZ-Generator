@@ -4,7 +4,14 @@ from __future__ import annotations
 from txdot_overlay.commands.build_county import build_county
 from txdot_overlay.config import Config
 from txdot_overlay.logging_setup import get_logger
-from txdot_overlay.pipeline import counties_in_district, find_district_row, get_cache, load_counties, load_districts
+from txdot_overlay.pipeline import (
+    counties_in_district,
+    find_district_row,
+    get_cache,
+    load_city_limits,
+    load_counties,
+    load_districts,
+)
 
 logger = get_logger(__name__)
 
@@ -13,6 +20,7 @@ def run(district_name: str, config: Config, *, force_refresh: bool = False) -> i
     cache = get_cache(config)
     districts = load_districts(config, cache, force_refresh=force_refresh)
     counties = load_counties(config, cache, force_refresh=force_refresh)
+    city_limits = load_city_limits(config, cache, force_refresh=force_refresh)
 
     try:
         district_row = find_district_row(districts, config, district_name)
@@ -40,7 +48,13 @@ def run(district_name: str, config: Config, *, force_refresh: bool = False) -> i
     for _, county_row in district_counties.iterrows():
         county_name = county_row[county_field]
         try:
-            build_county(county_name, config, counties=counties, force_refresh=force_refresh)
+            build_county(
+                county_name,
+                config,
+                counties=counties,
+                city_limits=city_limits,
+                force_refresh=force_refresh,
+            )
         except Exception as exc:  # noqa: BLE001 - continue building remaining counties
             logger.error("Failed to build county %s: %s", county_name, exc)
             exit_code = 1

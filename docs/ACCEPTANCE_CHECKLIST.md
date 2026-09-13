@@ -67,15 +67,39 @@ Build the POC before starting: `python -m txdot_overlay package-poc
 
 ## Additional checklist: popup/classification phase
 
-13. **"Local, County & Other Roads" folder** -- the renamed folder (formerly
-    "Other TxDOT-Maintained Road") appears under each county's TxDOT
-    Roadways, styled thin muted gray, visually subordinate to the state
-    highway categories above it.
-14. **Grade-Separated Connectors are visually subordinate** -- when
-    manually enabled (Reference Geometry > Grade-Separated Connectors is
-    hidden by default), the connector segments render as a thin, muted,
-    low-contrast line, never mistaken at a glance for a real drivable road.
-15. **Grouped popups render cleanly** -- clicking a roadway segment shows
+13. **"Other TxDOT Roadways" folder** -- the renamed folder (formerly
+    "Local, County & Other Roads") appears under each county's TxDOT
+    Roadways, styled thin muted gray. It is expected to be **empty in
+    practice** now that off-system roads have moved to "Other Public
+    Roadways" below -- it exists only as a safety net for a future
+    unrecognized on-system HSYS code, so seeing it absent or empty for
+    every county is correct, not a bug.
+14. **"Other Public Roadways" is a sibling of "TxDOT Roadways", not nested
+    inside it** -- expanding a county shows both folders at the same level.
+    Spot-check its four subfolders: a known county road (`HSYS=CR`) appears
+    under "County Roads", a city street (`HSYS=LS`) under "City Streets",
+    and any RMA-maintained off-system road appears under "Regional Mobility
+    Authority Roads" rather than "Other / Unclassified".
+15. **Grade-Separated Connectors are visually subordinate, and now visible
+    by default** -- under "Roadway Network Connectors > Grade-Separated
+    Connectors" (renamed from "Reference Geometry"; both folders default
+    to checked/visible now, a reversal from the earlier hidden-by-default
+    behavior), the connector segments render as a thin, muted, low-contrast
+    line, never mistaken at a glance for a real drivable road.
+16. **Administrative Boundaries wraps County Boundary and City Limits** --
+    expanding a county shows an "Administrative Boundaries" folder
+    (checked/visible) containing both "County Boundary" (checked) and
+    "City Limits" (unchecked by default). Checking "City Limits"
+    independently of its parent folder reveals city polygons without
+    affecting the County Boundary or any other folder.
+17. **City Limits geometry and popups look right** -- city polygons render
+    with a transparent-ish fill and a restrained outline (not a heavy solid
+    fill that would obscure roads underneath); a city polygon that crosses
+    the county line is visibly clipped at the boundary rather than
+    extending into the neighboring county; clicking a city polygon shows
+    its name, county-seat flag (if present), population, and a "Source"
+    note -- never literal `nan`/`None` for a missing field.
+18. **Grouped popups render cleanly** -- clicking a roadway segment shows
     section headers (Identity, Roadway Dimensions, ROW Reference,
     Operations & Traffic), only for sections with at least one populated
     field; no section renders as an empty header, and no field ever shows
@@ -83,11 +107,11 @@ Build the POC before starting: `python -m txdot_overlay package-poc
     value (a decoded value that happens to legitimately be the word "None",
     e.g. Access Control, is expected and correct -- see
     `docs/FIELD_REFERENCE.md`).
-16. **Friendly highway titles read naturally** -- placemark titles show
+19. **Friendly highway titles read naturally** -- placemark titles show
     "IH 20", "US 69", "FM 14" rather than raw `HWY` codes, while the popup's
     Identity section still shows the raw code (e.g. "Highway: IH0020")
     alongside the decoded route system.
-17. **ROW_MIN disclaimer is visible whenever shown** -- any popup
+20. **ROW_MIN disclaimer is visible whenever shown** -- any popup
     displaying "Minimum recorded ROW width" also shows the adjoining
     "Inventory reference value; not a surveyed ROW boundary." note.
 

@@ -145,7 +145,19 @@ class ArcGISLayerClient:
         page_size: int = 2000,
         return_geometry: bool = True,
     ) -> dict[str, Any]:
-        """Page through every matching feature, returning one merged FeatureCollection."""
+        """Page through every matching feature, returning one merged FeatureCollection.
+
+        Stops only on an empty page, and advances the offset by the number
+        of features actually returned -- never by the requested `page_size`.
+        A service may silently cap the returned count below what was
+        requested via its own (possibly smaller) `maxRecordCount`: confirmed
+        live for `TxDOT_City_Boundaries` (`maxRecordCount=1000` while this
+        project's configured page size is 2000). Treating "fewer features
+        than requested" as an end-of-data signal under-fetches in that case
+        (silently missing the remainder of the layer), and advancing the
+        offset by the requested page_size rather than the actual count would
+        additionally skip records on the next page.
+        """
         all_features: list[dict[str, Any]] = []
         offset = 0
         while True:
@@ -157,8 +169,8 @@ class ArcGISLayerClient:
                 return_geometry=return_geometry,
             )
             features = page.get("features", [])
-            all_features.extend(features)
-            if len(features) < page_size:
+            if not features:
                 break
-            offset += page_size
+            all_features.extend(features)
+            offset += len(features)
         return {"type": "FeatureCollection", "features": all_features}

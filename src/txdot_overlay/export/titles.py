@@ -13,6 +13,7 @@ from txdot_overlay.values import is_missing_value
 from txdot_overlay.xml_safety import strip_illegal_xml_chars
 
 UNNAMED_SEGMENT_LABEL = "Unnamed roadway segment"
+UNNAMED_CITY_LABEL = "Unnamed city"
 
 # HWY = Highway-System (2 letters) + Highway-Number (up to 4 digits,
 # zero-padded) + optional Highway-Suffix (1 letter), per the RIF spec's
@@ -58,3 +59,18 @@ def resolve_title(*, hwy, ste_nam, ria_rte_id) -> tuple[str, str | None]:
             return raw, None
 
     return UNNAMED_SEGMENT_LABEL, None
+
+
+def resolve_city_limits_title(*, city_name) -> tuple[str, str | None]:
+    """Return (display_title, raw_identifier_if_different) for a city-limits placemark.
+
+    Same missing-value/XML-safety handling as resolve_title, just a single
+    fallback field (city name) since city limits carry no highway-style
+    identifier hierarchy.
+    """
+    if not is_missing_value(city_name):
+        raw = strip_illegal_xml_chars(str(city_name)).strip()
+        if raw:
+            return raw, None
+
+    return UNNAMED_CITY_LABEL, None

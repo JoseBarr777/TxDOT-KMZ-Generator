@@ -36,11 +36,24 @@ from enum import Enum
 import geopandas as gpd
 
 from txdot_overlay.config import Config
-from txdot_overlay.processing.codes import HSYS_OFF_SYSTEM_CODES, HSYS_ON_SYSTEM_CODES
+from txdot_overlay.processing.codes import (
+    HSYS_OFF_SYSTEM_CODES,
+    HSYS_ON_SYSTEM_CODES,
+    is_maintained_by_regional_mobility_authority,
+)
 from txdot_overlay.values import is_missing_value
 
 GRADE_SEPARATED_CONNECTOR_RDBD_ID = "GS"
 GRADE_SEPARATED_CONNECTOR_STYLE_KEY = "grade_separated_connector"
+
+# Sub-folder order within the "Other Public Roadways" branch (see
+# kml_builder.py). Mirrors ROUTE_CATEGORY_ORDER's role for "TxDOT Roadways".
+OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER = [
+    "county_road",
+    "city_street",
+    "regional_mobility_authority",
+    "other_unclassified",
+]
 
 
 class PhysicalRoadType(str, Enum):
@@ -103,11 +116,39 @@ def classify_route_style(*, hsys, rdbd_id, config: Config) -> str:
     return config.route_category(hsys)
 
 
+def classify_other_public_roadway_category(*, physical_type: str, rdway_maint_agcy) -> str | None:
+    """Return the "Other Public Roadways" sub-folder for one off-system record.
+
+    Returns None for on-system (`state_highway_system`) and grade-separated-
+    connector rows -- those never appear under "Other Public Roadways" at
+    all, see kml_builder.py. RDWAY_MAINT_AGCY is consulted only here, and
+    only to split the small `other_physical_roadway`/`unknown` remainder
+    (FD/TL codes, or a missing/unrecognized HSYS) into a Regional-Mobility-
+    Authority-maintained bucket versus everything else -- it never overrides
+    the on-system/off-system split itself, which comes from HSYS via
+    classify_physical_type(). County Road (CR) and (Local) City Street (LS)
+    are placed by HSYS alone, matching their RIF-spec meaning directly.
+    """
+    if physical_type == PhysicalRoadType.COUNTY_ROAD.value:
+        return "county_road"
+    if physical_type == PhysicalRoadType.LOCAL_STREET.value:
+        return "city_street"
+    if physical_type in (
+        PhysicalRoadType.OTHER_PHYSICAL_ROADWAY.value,
+        PhysicalRoadType.UNKNOWN.value,
+    ):
+        if is_maintained_by_regional_mobility_authority(rdway_maint_agcy):
+            return "regional_mobility_authority"
+        return "other_unclassified"
+    return None
+
+
 def classify_routes(roadways: gpd.GeoDataFrame, config: Config) -> gpd.GeoDataFrame:
-    """Add `physical_type` and `route_category` columns to a roadways frame."""
+    """Add `physical_type`, `route_category`, and `other_public_roadway_category` columns."""
     fields = config.sources["roadways"].fields
     hsys_field = fields["highway_system"]
     rdbd_field = fields["roadbed_id"]
+    maint_agcy_field = fields["maintenance_agency"]
 
     result = roadways.copy()
     result["physical_type"] = [
@@ -117,5 +158,13 @@ def classify_routes(roadways: gpd.GeoDataFrame, config: Config) -> gpd.GeoDataFr
     result["route_category"] = [
         classify_route_style(hsys=hsys, rdbd_id=rdbd_id, config=config)
         for hsys, rdbd_id in zip(result[hsys_field], result[rdbd_field])
+    ]
+    result["other_public_roadway_category"] = [
+        classify_other_public_roadway_category(
+            physical_type=physical_type, rdway_maint_agcy=rdway_maint_agcy
+        )
+        for physical_type, rdway_maint_agcy in zip(
+            result["physical_type"], result[maint_agcy_field]
+        )
     ]
     return result

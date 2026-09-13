@@ -95,6 +95,14 @@ def test_is_maintained_by_state_highway_agency():
     assert codes.is_maintained_by_state_highway_agency(float("nan")) is False
 
 
+def test_is_maintained_by_regional_mobility_authority():
+    assert codes.is_maintained_by_regional_mobility_authority(16) is True
+    assert codes.is_maintained_by_regional_mobility_authority("16") is True
+    assert codes.is_maintained_by_regional_mobility_authority(1) is False
+    assert codes.is_maintained_by_regional_mobility_authority(None) is False
+    assert codes.is_maintained_by_regional_mobility_authority(float("nan")) is False
+
+
 def test_hsys_on_off_system_partition_is_complete_and_disjoint():
     overlap = codes.HSYS_ON_SYSTEM_CODES & codes.HSYS_OFF_SYSTEM_CODES
     assert overlap == frozenset()

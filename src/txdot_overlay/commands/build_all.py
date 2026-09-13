@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import geopandas as gpd
 
-from txdot_overlay.commands.build_county import build_county
+from txdot_overlay.commands.build_county import build_county, select_city_limits_for_county
 from txdot_overlay.config import Config
 from txdot_overlay.export.kml_builder import build_master_kml, build_single_file_kml
 from txdot_overlay.export.kmz_writer import save_kml, save_kmz
@@ -16,6 +16,7 @@ from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.pipeline import (
     counties_in_district,
     get_cache,
+    load_city_limits,
     load_counties,
     load_districts,
     load_roadways_for_county,
@@ -38,6 +39,7 @@ def run(
     cache = get_cache(config)
     districts = load_districts(config, cache, force_refresh=force_refresh)
     counties = load_counties(config, cache, force_refresh=force_refresh)
+    city_limits = load_city_limits(config, cache, force_refresh=force_refresh)
 
     styles = build_all_styles(config)
 
@@ -64,28 +66,39 @@ def run(
 
     county_field = config.sources["counties"].fields["name"]
     county_roadways: dict[str, gpd.GeoDataFrame] = {}
+    county_city_limits: dict[str, gpd.GeoDataFrame] = {}
     exit_code = 0
 
     for _, county_row in scope.iterrows():
         county_name = county_row[county_field]
         try:
-            build_county(county_name, config, counties=counties, force_refresh=force_refresh)
+            build_county(
+                county_name,
+                config,
+                counties=counties,
+                city_limits=city_limits,
+                force_refresh=force_refresh,
+            )
             if single_file:
-                county_roadways[county_name] = _rebuild_processed_roadways(
-                    county_row, counties, config, cache, force_refresh
+                roadways, clipped_city_limits = _rebuild_processed_roadways(
+                    county_row, counties, city_limits, config, cache, force_refresh
                 )
+                county_roadways[county_name] = roadways
+                county_city_limits[county_name] = clipped_city_limits
         except Exception as exc:  # noqa: BLE001 - continue building remaining counties
             logger.error("Failed to build county %s: %s", county_name, exc)
             exit_code = 1
 
     if single_file:
-        single_kml = build_single_file_kml(districts, counties, county_roadways, config, styles)
+        single_kml = build_single_file_kml(
+            districts, counties, county_roadways, county_city_limits, config, styles
+        )
         save_kmz(single_kml, config.output_dir / config.single_file_kmz_name)
 
     return exit_code
 
 
-def _rebuild_processed_roadways(county_row, counties, config, cache, force_refresh):
+def _rebuild_processed_roadways(county_row, counties, city_limits, config, cache, force_refresh):
     """Re-run the same processing pipeline build_county used, for single-file assembly.
 
     Kept intentionally separate from build_county (which saves its own KMZ)
@@ -102,4 +115,5 @@ def _rebuild_processed_roadways(county_row, counties, config, cache, force_refre
     roadways = classify_routes(roadways, config)
     if config.simplification_enabled:
         roadways = simplify_geometry(roadways, config.simplification_tolerance_degrees)
-    return roadways
+    clipped_city_limits = select_city_limits_for_county(city_limits, single_county_gdf)
+    return roadways, clipped_city_limits

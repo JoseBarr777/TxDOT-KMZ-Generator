@@ -4,7 +4,9 @@ from shapely.geometry import LineString
 
 from txdot_overlay.processing.classify import (
     GRADE_SEPARATED_CONNECTOR_STYLE_KEY,
+    OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER,
     PhysicalRoadType,
+    classify_other_public_roadway_category,
     classify_physical_type,
     classify_route_style,
     classify_routes,
@@ -74,6 +76,7 @@ def test_classify_routes_adds_both_columns(config):
         {
             road_fields["highway_system"]: ["IH", "CR", "US"],
             road_fields["roadbed_id"]: ["KG", "KG", "GS"],
+            road_fields["maintenance_agency"]: [1, 2, None],
             "geometry": [LineString([(0, 0), (1, 1)])] * 3,
         },
         crs="EPSG:4326",
@@ -88,6 +91,86 @@ def test_classify_routes_adds_both_columns(config):
         "interstate",
         "county_local_other",
         "grade_separated_connector",
+    ]
+    # pandas coerces None -> NaN for this object column on list assignment
+    # (the same dtype-inference quirk documented in docs/FIELD_REFERENCE.md's
+    # "nan" trace) -- compare via pandas' own null check rather than `is None`.
+    other_public = result["other_public_roadway_category"]
+    assert other_public.isna().tolist() == [True, False, True]
+    assert other_public.iloc[1] == "county_road"
+
+
+# --- Other Public Roadways sub-classification ------------------------------
+
+
+def test_classify_other_public_roadway_category_county_road():
+    assert (
+        classify_other_public_roadway_category(
+            physical_type=PhysicalRoadType.COUNTY_ROAD.value, rdway_maint_agcy=2
+        )
+        == "county_road"
+    )
+
+
+def test_classify_other_public_roadway_category_city_street():
+    assert (
+        classify_other_public_roadway_category(
+            physical_type=PhysicalRoadType.LOCAL_STREET.value, rdway_maint_agcy=4
+        )
+        == "city_street"
+    )
+
+
+def test_classify_other_public_roadway_category_regional_mobility_authority():
+    assert (
+        classify_other_public_roadway_category(
+            physical_type=PhysicalRoadType.OTHER_PHYSICAL_ROADWAY.value,
+            rdway_maint_agcy=16,
+        )
+        == "regional_mobility_authority"
+    )
+    assert (
+        classify_other_public_roadway_category(
+            physical_type=PhysicalRoadType.UNKNOWN.value, rdway_maint_agcy=16
+        )
+        == "regional_mobility_authority"
+    )
+
+
+def test_classify_other_public_roadway_category_other_unclassified():
+    assert (
+        classify_other_public_roadway_category(
+            physical_type=PhysicalRoadType.OTHER_PHYSICAL_ROADWAY.value,
+            rdway_maint_agcy=17,
+        )
+        == "other_unclassified"
+    )
+    assert (
+        classify_other_public_roadway_category(
+            physical_type=PhysicalRoadType.OTHER_PHYSICAL_ROADWAY.value,
+            rdway_maint_agcy=None,
+        )
+        == "other_unclassified"
+    )
+
+
+@pytest.mark.parametrize(
+    "physical_type",
+    [PhysicalRoadType.STATE_HIGHWAY_SYSTEM.value, PhysicalRoadType.GRADE_SEPARATED_CONNECTOR.value],
+)
+def test_classify_other_public_roadway_category_none_for_on_system_and_connectors(physical_type):
+    assert (
+        classify_other_public_roadway_category(physical_type=physical_type, rdway_maint_agcy=16)
+        is None
+    )
+
+
+def test_other_public_roadway_category_order_matches_hierarchy():
+    assert OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER == [
+        "county_road",
+        "city_street",
+        "regional_mobility_authority",
+        "other_unclassified",
     ]
 
 

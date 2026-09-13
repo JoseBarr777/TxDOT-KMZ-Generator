@@ -1,14 +1,19 @@
 """Tests for grade-separated-connector handling in the exported KML structure.
 
 Covers the explicit requirements: grade-separated connectors (RDBD_ID=GS)
-are retained (not dropped), placed under Reference Geometry >
-Grade-Separated Connectors, hidden by default, and never classified as
+are retained (not dropped), placed under Roadway Network Connectors >
+Grade-Separated Connectors, visible by default, and never classified as
 physical state highways / never counted as physical roadway features.
 
 Naming note: this category was previously called "artificial centerline."
 That name is retired -- see processing/classify.py's module docstring --
 because no official current TxDOT source was found asserting that every
 GS-coded record is classified by TxDOT as an "Artificial Centerline."
+
+The "Reference Geometry" wrapper folder was itself later renamed to
+"Roadway Network Connectors" as part of the county hierarchy restructure
+(see docs/SOURCE_AUDIT.md and README.md) -- Grade-Separated Connectors
+flipped from hidden-by-default to visible-by-default in that same change.
 """
 from xml.etree import ElementTree as ET
 
@@ -23,6 +28,13 @@ KML_NS = "{http://www.opengis.net/kml/2.2}"
 
 COUNTY_POLY = Polygon([(-95.5, 32.0), (-95.0, 32.0), (-95.0, 32.5), (-95.5, 32.5)])
 
+def _empty_city_limits(config):
+    fields = config.sources["city_limits"].fields
+    return gpd.GeoDataFrame(
+        {name: [] for name in fields.values()} | {"geometry": []},
+        crs="EPSG:4326",
+    )
+
 
 def _sample_roadways(config):
     fields = config.sources["roadways"].fields
@@ -33,6 +45,7 @@ def _sample_roadways(config):
             fields["roadbed_id"]: ["KG", "GS"],  # one physical, one connector
             fields["street_name"]: [None, None],
             fields["route_id"]: ["RTE1", "RTE2"],
+            fields["maintenance_agency"]: [1, 1],
             "geometry": [
                 LineString([(-95.3, 32.1), (-95.2, 32.1)]),
                 LineString([(-95.2, 32.1), (-95.1, 32.1)]),
@@ -52,6 +65,7 @@ def _build_kml(config):
         county_attrs={config.sources["counties"].fields["name"]: "Smith"},
         county_geometry=COUNTY_POLY,
         roadways=roadways,
+        city_limits=_empty_city_limits(config),
         config=config,
         styles=styles,
     )
@@ -79,22 +93,22 @@ def test_grade_separated_connector_is_retained_not_dropped(config):
     assert len(root.findall(f".//{KML_NS}Placemark")) == 3
 
 
-def test_grade_separated_connector_placed_under_reference_geometry_folder(config):
+def test_grade_separated_connector_placed_under_roadway_network_connectors_folder(config):
     root, _ = _build_kml(config)
-    reference_folder = _find_folder(root, "Reference Geometry")
-    assert reference_folder is not None
-    connector_folder = _find_folder(root, "Grade-Separated Connectors", within=reference_folder)
+    connectors_folder = _find_folder(root, "Roadway Network Connectors")
+    assert connectors_folder is not None
+    connector_folder = _find_folder(root, "Grade-Separated Connectors", within=connectors_folder)
     assert connector_folder is not None
     placemarks = connector_folder.findall(f"{KML_NS}Placemark")
     assert len(placemarks) == 1
 
 
-def test_reference_geometry_and_grade_separated_connectors_hidden_by_default(config):
+def test_roadway_network_connectors_and_grade_separated_connectors_visible_by_default(config):
     root, _ = _build_kml(config)
-    reference_folder = _find_folder(root, "Reference Geometry")
-    connector_folder = _find_folder(root, "Grade-Separated Connectors", within=reference_folder)
-    assert _is_visible(reference_folder) is False
-    assert _is_visible(connector_folder) is False
+    connectors_folder = _find_folder(root, "Roadway Network Connectors")
+    connector_folder = _find_folder(root, "Grade-Separated Connectors", within=connectors_folder)
+    assert _is_visible(connectors_folder) is True
+    assert _is_visible(connector_folder) is True
 
 
 def test_grade_separated_connector_not_present_in_interstate_folder(config):
