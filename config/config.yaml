@@ -53,6 +53,13 @@ sources:
     # counties.CNTY_NBR (verified), so county/district assignment for
     # roadways uses that attribute join first, falling back to a spatial
     # join against county polygons only when CO/DI are missing or invalid.
+    #
+    # Coded fields (hsys, roadbed_id, dir_trav, hwy_stat, rdway_maint_agcy,
+    # admin, f_system, access_control, median_type, inside/outside_shoulder_type)
+    # are decoded for display by processing/codes.py using definitions
+    # verified against TxDOT's official RIF spec -- see docs/FIELD_REFERENCE.md.
+    # None of the ArcGIS service's own field metadata defines coded-value
+    # domains for these (checked via inspect-sources: domain is null for all).
     fields:
       object_id: "OBJECTID"
       county_code: "CO"
@@ -64,41 +71,102 @@ sources:
       highway_suffix: "HSUF"
       street_name: "STE_NAM"
       control_section: "C_SEC"
+      roadbed_id: "RDBD_ID"
+      direction_of_travel: "DIR_TRAV"
+      highway_status: "HWY_STAT"
+      maintenance_agency: "RDWAY_MAINT_AGCY"
+      admin_system: "ADMIN"
+      functional_system: "F_SYSTEM"
       num_lanes: "NUM_LANES"
-      speed_limit: "SPD_MAX"
+      lane_width: "LANE_WIDTH"
+      surface_width: "SUR_W"
       surface_type: "SRF_TYPE"
+      paved_roadbed_width: "PV_RB_WID"
+      roadbed_width: "RB_WID"
+      median_width: "MED_WID"
+      median_type: "MED_TYPE"
+      inside_shoulder_width: "S_WID_I"
+      inside_shoulder_type: "S_TYPE_I"
+      outside_shoulder_width: "S_WID_O"
+      outside_shoulder_type: "S_TYPE_O"
+      row_min: "ROW_MIN"
+      speed_limit: "SPD_MAX"
+      access_control: "ACES_CTRL"
+      adt_current: "ADT_CUR"
+      adt_year: "ADT_YEAR"
+      section_length: "LEN_SEC"
       lane_miles: "LN_MILES"
+    # Kept for inspect-sources/audit-data field-presence checks; the popup
+    # itself is built from grouped sections in export/descriptions.py, not
+    # this flat list.
     description_fields:
       - "HWY"
       - "HSYS"
       - "STE_NAM"
+      - "RIA_RTE_ID"
       - "C_SEC"
+      - "RDBD_ID"
+      - "DIR_TRAV"
+      - "HWY_STAT"
+      - "RDWAY_MAINT_AGCY"
+      - "ADMIN"
+      - "F_SYSTEM"
       - "NUM_LANES"
+      - "LANE_WIDTH"
+      - "SUR_W"
+      - "PV_RB_WID"
+      - "RB_WID"
+      - "MED_WID"
+      - "MED_TYPE"
+      - "S_WID_I"
+      - "S_TYPE_I"
+      - "S_WID_O"
+      - "S_TYPE_O"
+      - "ROW_MIN"
       - "SPD_MAX"
+      - "ACES_CTRL"
+      - "ADT_CUR"
+      - "ADT_YEAR"
+      - "LEN_SEC"
       - "LN_MILES"
 
-# Maps the roadway inventory's HSYS code to a styling/route category.
-# Confirmed HSYS values present in Smith County (2026-09-12): CR, FM, IH,
-# LS, PR, SH, SL, SS, TL, US. Codes not seen live (e.g. RM, BI/BU/BS/BF) are
-# TxDOT-documented highway-system abbreviations included defensively; any
-# code not listed here falls back to "other".
+# Maps the roadway inventory's HSYS code to a styling/route category (which
+# KML folder and color a physical road gets). Grade-separated connectors
+# (RDBD_ID=GS, officially decoded "Grade Separated Connector") never reach
+# this map -- processing/classify.py routes them to
+# "grade_separated_connector" first, regardless of HSYS. Every HSYS code below
+# is verified from the official RIF spec (see docs/FIELD_REFERENCE.md);
+# codes actually observed live in the Tyler District as of 2026-09-12 are
+# marked. Anything not listed here (there should be nothing) falls back to
+# "county_local_other" via `default`, not silently to a physical-road color.
 route_classification:
-  IH: interstate            # Interstate Highway
-  US: us_highway             # US Highway
-  SH: state_highway          # State Highway
-  FM: fm_rm                  # Farm to Market Road
-  RM: fm_rm                  # Ranch to Market Road
-  SL: loop_spur_business      # State Loop
-  SS: loop_spur_business      # State Spur
-  BI: loop_spur_business      # Business Interstate
-  BU: loop_spur_business      # Business US
-  BS: loop_spur_business      # Business State
-  BF: loop_spur_business      # Business FM
-  PR: other                  # Park Road
-  CR: other                  # County Road
-  TL: other                  # Toll Road / turnpike
-  LS: other                  # Lateral/local street
-  default: other
+  IH: interstate              # Interstate -- observed live
+  US: us_highway               # US Highway -- observed live
+  UA: us_highway               # US Alternate
+  SH: state_highway            # State Highway -- observed live
+  SA: state_highway            # State Alternate
+  PA: state_highway            # Principal Arterial
+  FM: fm_rm                    # Farm to Market Road -- observed live
+  RM: fm_rm                    # Ranch to Market Road -- observed live
+  FS: fm_rm                    # FM Spur -- observed live
+  RS: fm_rm                    # RM Spur
+  SL: loop_spur_business        # State Loop -- observed live
+  SS: loop_spur_business        # State Spur -- observed live
+  BI: loop_spur_business        # Business Interstate
+  BU: loop_spur_business        # Business US -- observed live
+  BS: loop_spur_business        # Business State -- observed live
+  BF: loop_spur_business        # Business FM
+  PR: loop_spur_business        # Park Road -- observed live
+  RE: loop_spur_business        # Rec Road
+  RP: loop_spur_business        # Rec Road Spur
+  RR: loop_spur_business        # Ranch Road
+  RU: loop_spur_business        # RR Spur
+  UP: loop_spur_business        # US Spur
+  CR: county_local_other       # County Road (off-system) -- observed live
+  LS: county_local_other       # (Local) City Street (off-system) -- observed live
+  FD: county_local_other       # Federal Road (off-system)
+  TL: county_local_other       # Off-System Toll Road -- observed live
+  default: county_local_other
 
 styles:
   district_boundary:
@@ -134,10 +202,19 @@ styles:
       label: "Loop / Spur / Business Route"
       line_color: "#800080"  # purple
       line_width: 1.5
-    other:
-      label: "Other TxDOT-Maintained Road"
-      line_color: "#808080"  # gray
+    county_local_other:
+      label: "Local, County & Other Roads"
+      line_color: "#808080"  # muted gray -- visually subordinate to state routes
       line_width: 1.0
+    grade_separated_connector:
+      label: "Grade-Separated Connectors"
+      line_color: "#66CCCC"  # muted cyan -- deliberately faint; reference-only geometry
+      line_width: 0.6
+      # Google Earth Pro's LineStyle has no dash-pattern property in KML
+      # 2.2 -- <gx:LineStyle> extensions and other tricks are unreliable
+      # across versions, so we document this instead of shipping a style
+      # that silently renders solid. See docs/FIELD_REFERENCE.md.
+      dashed: false
 
 visibility_defaults:
   district_boundaries_folder: true
@@ -148,6 +225,8 @@ visibility_defaults:
   county_boundary_folder: true    # visible once its parent county folder is turned on
   roadways_folder: true           # visible once its parent county folder is turned on
   route_category_folder: true
+  reference_geometry_folder: false    # hidden by default -- see FIELD_REFERENCE.md
+  grade_separated_connectors_folder: false  # hidden by default even if its parent is opened
 
 cache:
   directory: "data/cache"

@@ -4,7 +4,10 @@ from __future__ import annotations
 import simplekml
 
 from txdot_overlay.config import Config, PolygonStyleConfig, RouteStyleConfig
+from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.styling.colors import hex_to_kml_color
+
+logger = get_logger(__name__)
 
 
 def polygon_style(style_config: PolygonStyleConfig) -> simplekml.Style:
@@ -21,7 +24,21 @@ def polygon_style(style_config: PolygonStyleConfig) -> simplekml.Style:
 
 
 def route_style(style_config: RouteStyleConfig) -> simplekml.Style:
-    """Build a line style for one roadway category (interstate, US highway, etc.)."""
+    """Build a line style for one roadway category (interstate, US highway, etc.).
+
+    `dashed` is honored only in spirit: standard KML 2.2 LineStyle has no
+    dash-pattern property, and Google Earth Pro does not reliably render
+    dashed polylines through any documented extension. Requesting it here
+    does not silently no-op -- it logs so the gap is visible -- and falls
+    back to the configured solid line at its configured (already thin/muted)
+    width, which is what actually ships.
+    """
+    if style_config.dashed:
+        logger.warning(
+            "Style %r requests a dashed line, but KML 2.2 has no reliable "
+            "dash-pattern support in Google Earth Pro; rendering solid instead.",
+            style_config.label,
+        )
     style = simplekml.Style()
     style.linestyle.color = hex_to_kml_color(style_config.line_color)
     style.linestyle.width = style_config.line_width

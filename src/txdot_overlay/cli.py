@@ -90,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="counties",
         help="Also audit roadway data for this county; repeatable.",
     )
+    audit_parser.add_argument(
+        "--audit-output-dir",
+        default=None,
+        help="Where to write the JSON report (default: ./dist/audits)",
+    )
 
     package_parser = subparsers.add_parser(
         "package-poc",
@@ -129,8 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-output":
         return validate_output.run(config)
     if args.command == "audit-data":
+        audit_output_dir = Path(args.audit_output_dir) if args.audit_output_dir else None
         return audit_data.run(
-            config, districts_filter=args.districts, counties_filter=args.counties
+            config,
+            districts_filter=args.districts,
+            counties_filter=args.counties,
+            audit_output_dir=audit_output_dir,
         )
     if args.command == "package-poc":
         output_dir = Path(args.output_dir) if args.output_dir else None

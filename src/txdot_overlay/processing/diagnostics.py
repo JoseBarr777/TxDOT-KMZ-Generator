@@ -137,6 +137,31 @@ class SourceAudit:
     def ok(self) -> bool:
         return not self.duplicate_ids and not self.dropped_details
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_key": self.source_key,
+            "label": self.label,
+            "source_record_count": self.source_record_count,
+            "downloaded_record_count": self.downloaded_record_count,
+            "unique_id_count": self.unique_id_count,
+            "duplicate_ids": {str(k): v for k, v in self.duplicate_ids.items()},
+            "null_geometry_count": self.null_geometry_count,
+            "empty_geometry_count": self.empty_geometry_count,
+            "invalid_geometry_count": self.invalid_geometry_count,
+            "repaired_geometry_count": self.repaired_geometry_count,
+            "dropped_count": self.dropped_count,
+            "final_exported_count": self.final_exported_count,
+            "dropped_details": [
+                {
+                    "id_value": str(i.id_value),
+                    "name": str(i.name),
+                    "status": i.status,
+                    "reason": i.reason,
+                }
+                for i in self.dropped_details
+            ],
+        }
+
     def format_report(self) -> str:
         lines = [f"=== {self.label} ({self.source_key}) ==="]
         if self.source_record_count is not None:

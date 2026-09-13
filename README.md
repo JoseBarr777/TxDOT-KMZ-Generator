@@ -32,11 +32,16 @@ TxDOT Reference Overlay
    └─ <District>              (one per district, hidden)
       └─ <County>             (NetworkLink -> county KMZ, hidden)
          ├─ County Boundary
-         └─ TxDOT Roadways
-            ├─ Interstate / US Highway / State Highway
-            ├─ FM / RM Road
-            ├─ Loop / Spur / Business Route
-            └─ Other TxDOT-Maintained Road
+         ├─ TxDOT Roadways
+         │  ├─ Interstate / US Highway / State Highway
+         │  ├─ FM / RM Road
+         │  ├─ Loop / Spur / Business Route
+         │  └─ Local, County & Other Roads
+         └─ Reference Geometry            (hidden by default)
+            └─ Grade-Separated Connectors (hidden by default; RDBD_ID=GS,
+                                            officially decoded "Grade
+                                            Separated Connector" -- excluded
+                                            from physical-road counts/classification)
 ```
 
 ## Data sources
@@ -106,17 +111,29 @@ statewide.
 ```
 config/config.yaml          Source URLs, confirmed field names, styles, cache/output paths
 src/txdot_overlay/
+  values.py                  Missing/suspicious-value classification (shared by popups + audit)
   acquisition/               ArcGIS REST client, metadata inspection, disk cache, fetch+cache glue
-  processing/                CRS handling, clipping/simplification, county/district assignment, route classification
+  processing/
+    codes.py                  Coded-value decode tables (HSYS, ADMIN, HWY_STAT, ...)
+    classify.py                Physical-type taxonomy + grade-separated-connector detection + route styling category
+    diagnostics.py              Geometry repair-or-flag, duplicate-id checks, SourceAudit
+    value_audit.py               Field-level null/suspicious-value tallies (read-only)
+    geometry.py, assignment.py   CRS handling, clipping/simplification, county/district assignment
   styling/                   #RRGGBB -> KML aabbggrr color conversion, simplekml Style construction
-  export/                    KML/KMZ folder building, HTML descriptions, KMZ writing, output validation
+  export/
+    titles.py                  Placemark title fallback order + highway-number formatting
+    formatting.py                Clean numeric formatting (units, thousands separators)
+    descriptions.py               Grouped, conditional-section popup HTML (+ flat table for boundaries)
+    kml_builder.py, geometry_adapter.py, kmz_writer.py, validate.py
   commands/                  One module per CLI subcommand
-  pipeline.py                Shared "fetch (cached) -> clean GeoDataFrame" helpers
+  pipeline.py                Shared "fetch (cached) -> repaired GeoDataFrame" helpers
   cli.py                     argparse subcommand wiring
-docs/FIELD_REFERENCE.md      Live-inspected fields/metadata this project relies on
-tests/                       pytest suite (colors, CRS conversion, field inspection, folder visibility)
+docs/FIELD_REFERENCE.md      Live-inspected fields/metadata, coded-value tables, the NaN trace
+docs/ACCEPTANCE_CHECKLIST.md Manual Google Earth Pro verification checklist
+tests/                       pytest suite
 data/cache/                  Cached ArcGIS responses (gitignored)
 data/output/                 Generated KML/KMZ (gitignored)
+dist/                        package-poc output, audit-data JSON reports (gitignored)
 ```
 
 ## Design notes
@@ -160,3 +177,36 @@ data/output/                 Generated KML/KMZ (gitignored)
   confirm the relative NetworkLinks still resolve after the whole folder is
   moved -- see `docs/ACCEPTANCE_CHECKLIST.md` for the manual Google Earth
   Pro verification this can't automate.
+- **Missing values are never stringified before classification.** A shared
+  `values.classify_value()` distinguishes `None`/`pandas.NA`/NaN
+  floats/blank strings (always missing) from literal source strings like
+  `"nan"` (suspicious, reported by `audit-data`, still hidden from popups)
+  from legacy-sentinel-shaped numbers like `99`/`999` (flagged, never
+  auto-suppressed -- only a documented per-field code table, in
+  `processing/codes.py`, may translate one). This exists because an earlier
+  version's popups displayed literal `"nan"` text; see
+  `docs/FIELD_REFERENCE.md`'s "nan" trace for the full root-cause writeup.
+- **Coded fields are decoded from TxDOT's own published spec, never
+  guessed from field names.** `processing/codes.py` transcribes "Roadway
+  Inventory File Format" (TPP-DM-RIB, rev. 2021-06-07) and the GRID User
+  Guide verbatim; an unrecognized code renders as `"Unknown code (N)"`
+  rather than silently guessing or dropping the row.
+- **Grade-separated connectors (`RDBD_ID=GS`, officially decoded "Grade
+  Separated Connector") are never shown as ordinary roads.** They're
+  retained (never dropped), excluded from physical-road counts and
+  classification, and placed under a hidden-by-default `Reference Geometry
+  > Grade-Separated Connectors` folder in a muted style. The field
+  originally assumed to identify these (`HWY_STAT`) turned out not to --
+  see `docs/FIELD_REFERENCE.md`. This category was previously named
+  "artificial centerline"; that name is retired because no official
+  current TxDOT source was found asserting that every `GS` record is
+  classified by TxDOT as an "Artificial Centerline" -- see
+  `processing/classify.py`'s module docstring.
+
+**Safety note**: this overlay is an informational screening/reference tool.
+`HSYS`, `RDWAY_MAINT_AGCY`, `ROW_MIN`, inclusion in the Roadway Inventory,
+grade-separated-connector geometry, and proximity to a centerline are none
+of them evidence that a TxDOT permit is or is not required, nor proof of
+ROW ownership or maintenance jurisdiction beyond what TxDOT's own source data
+claims. Nothing in this project performs or implies a legal ROW
+determination.

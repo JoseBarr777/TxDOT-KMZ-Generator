@@ -65,6 +65,32 @@ Build the POC before starting: `python -m txdot_overlay package-poc
     open instead of on toggle) -- this is the tradeoff the split
     master/KMZ design exists to avoid at statewide scale.
 
+## Additional checklist: popup/classification phase
+
+13. **"Local, County & Other Roads" folder** -- the renamed folder (formerly
+    "Other TxDOT-Maintained Road") appears under each county's TxDOT
+    Roadways, styled thin muted gray, visually subordinate to the state
+    highway categories above it.
+14. **Grade-Separated Connectors are visually subordinate** -- when
+    manually enabled (Reference Geometry > Grade-Separated Connectors is
+    hidden by default), the connector segments render as a thin, muted,
+    low-contrast line, never mistaken at a glance for a real drivable road.
+15. **Grouped popups render cleanly** -- clicking a roadway segment shows
+    section headers (Identity, Roadway Dimensions, ROW Reference,
+    Operations & Traffic), only for sections with at least one populated
+    field; no section renders as an empty header, and no field ever shows
+    literal `nan`, `NaN`, `<NA>`, or `None` as a stand-in for a missing
+    value (a decoded value that happens to legitimately be the word "None",
+    e.g. Access Control, is expected and correct -- see
+    `docs/FIELD_REFERENCE.md`).
+16. **Friendly highway titles read naturally** -- placemark titles show
+    "IH 20", "US 69", "FM 14" rather than raw `HWY` codes, while the popup's
+    Identity section still shows the raw code (e.g. "Highway: IH0020")
+    alongside the decoded route system.
+17. **ROW_MIN disclaimer is visible whenever shown** -- any popup
+    displaying "Minimum recorded ROW width" also shows the adjoining
+    "Inventory reference value; not a surveyed ROW boundary." note.
+
 ## Reporting results
 
 For each item, record: pass/fail, Google Earth Pro version, OS, and for any

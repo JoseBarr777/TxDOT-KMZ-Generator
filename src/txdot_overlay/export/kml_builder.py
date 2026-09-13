@@ -13,8 +13,15 @@ Structure produced (see README/docs for the full design):
       County Boundary                           (Folder)
         <County> polygon placemark
       TxDOT Roadways                            (Folder)
-        <Route category> folder                 (one per category present)
+        <Route category> folder                 (one per physical category present)
           <route> line placemark(s)
+      Reference Geometry                        (Folder, hidden)
+        Grade-Separated Connectors              (Folder, hidden)
+          <connector> line placemark(s)          (RDBD_ID=GS, officially
+                                                   decoded "Grade Separated
+                                                   Connector"; excluded from
+                                                   TxDOT Roadways' folders and
+                                                   from physical-road counts)
 """
 from __future__ import annotations
 
@@ -25,9 +32,11 @@ import geopandas as gpd
 import simplekml
 
 from txdot_overlay.config import Config
-from txdot_overlay.export.descriptions import build_description_html
+from txdot_overlay.export.descriptions import build_description_html, build_roadway_description_html
 from txdot_overlay.export.geometry_adapter import add_line_placemark, add_polygon_placemark
+from txdot_overlay.export.titles import resolve_title
 from txdot_overlay.logging_setup import get_logger
+from txdot_overlay.processing.classify import GRADE_SEPARATED_CONNECTOR_STYLE_KEY
 from txdot_overlay.utils import slugify
 
 logger = get_logger(__name__)
@@ -43,13 +52,16 @@ def _render_geometry(geometry, tolerance_degrees: float):
         return geometry
     return geometry.simplify(tolerance_degrees, preserve_topology=True)
 
+# Physical-road categories only; grade_separated_connector is deliberately
+# excluded -- it never appears under "TxDOT Roadways", only under
+# "Reference Geometry" (see add_county_detail_content).
 ROUTE_CATEGORY_ORDER = [
     "interstate",
     "us_highway",
     "state_highway",
     "fm_rm",
     "loop_spur_business",
-    "other",
+    "county_local_other",
 ]
 
 
@@ -175,41 +187,82 @@ def add_county_detail_content(
         visibility=True,
     )
 
+    road_fields = config.sources["roadways"].fields
+    is_connector = roadways["route_category"] == GRADE_SEPARATED_CONNECTOR_STYLE_KEY
+    physical_roadways = roadways[~is_connector]
+    grade_separated_connectors = roadways[is_connector]
+
     roadways_folder = parent_folder.newfolder(name="TxDOT Roadways")
     roadways_folder.visibility = (
         1 if config.visibility_defaults["roadways_folder"] else 0
     )
-    road_fields = config.sources["roadways"].fields
-    present_categories = set(roadways.get("route_category", []))
+    _add_route_category_folders(
+        roadways_folder, physical_roadways, road_fields, config, styles
+    )
+
+    if len(grade_separated_connectors):
+        reference_folder = parent_folder.newfolder(name="Reference Geometry")
+        reference_folder.visibility = (
+            1 if config.visibility_defaults["reference_geometry_folder"] else 0
+        )
+        connector_folder = reference_folder.newfolder(name="Grade-Separated Connectors")
+        connector_folder.visibility = (
+            1 if config.visibility_defaults["grade_separated_connectors_folder"] else 0
+        )
+        _add_roadway_placemarks(
+            connector_folder,
+            grade_separated_connectors,
+            road_fields,
+            styles[f"route_{GRADE_SEPARATED_CONNECTOR_STYLE_KEY}"],
+        )
+
+
+def _add_route_category_folders(
+    roadways_folder: Any,
+    physical_roadways: gpd.GeoDataFrame,
+    road_fields: dict[str, str],
+    config: Config,
+    styles: dict[str, simplekml.Style],
+) -> None:
+    present_categories = set(physical_roadways.get("route_category", []))
     for category in ROUTE_CATEGORY_ORDER:
         if category not in present_categories:
             continue
-        category_rows = roadways[roadways["route_category"] == category]
+        category_rows = physical_roadways[physical_roadways["route_category"] == category]
         label = config.route_styles[category].label
         category_folder = roadways_folder.newfolder(name=label)
         category_folder.visibility = (
             1 if config.visibility_defaults["route_category_folder"] else 0
         )
-        style = styles[f"route_{category}"]
-        for _, row in category_rows.iterrows():
-            if row.geometry is None or row.geometry.is_empty:
-                continue
-            placemark_name = (
-                row.get(road_fields["highway_full"])
-                or row.get(road_fields["street_name"])
-                or "Unnamed segment"
-            )
-            description = build_description_html(
-                row.to_dict(), config.sources["roadways"].description_fields
-            )
-            add_line_placemark(
-                category_folder,
-                name=str(placemark_name),
-                geometry=row.geometry,
-                style=style,
-                description=description,
-                visibility=True,
-            )
+        _add_roadway_placemarks(
+            category_folder, category_rows, road_fields, styles[f"route_{category}"]
+        )
+
+
+def _add_roadway_placemarks(
+    container: Any,
+    rows: gpd.GeoDataFrame,
+    road_fields: dict[str, str],
+    style: simplekml.Style,
+) -> None:
+    for _, row in rows.iterrows():
+        if row.geometry is None or row.geometry.is_empty:
+            continue
+        attrs = row.to_dict()
+        title, _raw_identifier = resolve_title(
+            hwy=attrs.get(road_fields["highway_full"]),
+            ste_nam=attrs.get(road_fields["street_name"]),
+            ria_rte_id=attrs.get(road_fields["route_id"]),
+        )
+        description = build_roadway_description_html(attrs, road_fields)
+        add_line_placemark(
+            container,
+            name=title,
+            geometry=row.geometry,
+            style=style,
+            description=description,
+            visibility=True,
+        )
 
 
 def build_single_file_kml(
@@ -288,10 +341,15 @@ def build_county_detail_kml(
         styles=styles,
     )
 
+    physical_count = int((roadways["route_category"] != GRADE_SEPARATED_CONNECTOR_STYLE_KEY).sum())
+    connector_count = int((roadways["route_category"] == GRADE_SEPARATED_CONNECTOR_STYLE_KEY).sum())
     logger.info(
-        "%s County (%s District): %d roadway feature(s) exported",
+        "%s County (%s District): %d physical roadway feature(s) exported "
+        "(%d grade-separated connector segment(s) excluded from that "
+        "count, shown separately under Reference Geometry)",
         county_name,
         district_name,
-        len(roadways),
+        physical_count,
+        connector_count,
     )
     return kml

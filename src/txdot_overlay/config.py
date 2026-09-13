@@ -29,6 +29,7 @@ class RouteStyleConfig:
     label: str
     line_color: str
     line_width: float
+    dashed: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,9 +66,10 @@ class Config:
 
     def route_category(self, hsys_code: str | None) -> str:
         if not hsys_code:
-            return self.route_classification.get("default", "other")
+            return self.route_classification.get("default", "county_local_other")
         return self.route_classification.get(
-            hsys_code.strip().upper(), self.route_classification.get("default", "other")
+            hsys_code.strip().upper(),
+            self.route_classification.get("default", "county_local_other"),
         )
 
 
@@ -114,6 +116,7 @@ def load_config(path: Path | str | None = None) -> Config:
                 label=block["label"],
                 line_color=block["line_color"],
                 line_width=float(block["line_width"]),
+                dashed=bool(block.get("dashed", False)),
             )
             for key, block in styles["routes"].items()
         }
