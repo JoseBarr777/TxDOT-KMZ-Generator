@@ -75,9 +75,28 @@ publication) without a code change.
 ## Setup
 
 ```bash
+uv sync --extra dev
+```
+
+This project targets Python 3.10+ (see `requires-python` in `pyproject.toml`);
+`.python-version` pins 3.13 as the standard development version `uv` will
+provision, not a minimum-supported-version requirement.
+
+<details>
+<summary>Without uv (pip)</summary>
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+```
+</details>
+
+Install the pre-commit hooks once per clone (runs Ruff lint/format on staged
+files before each commit):
+
+```bash
+uv run pre-commit install
 ```
 
 ## Usage

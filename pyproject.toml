@@ -17,6 +17,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "responses>=0.25",
+    "ruff>=0.16",
+    "pre-commit>=4.0",
 ]
 
 [project.scripts]
@@ -31,3 +33,28 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "UP", # pyupgrade (safe, py3.10+ only)
+    "B",  # flake8-bugbear
+]
+# E501: long, deliberately-written docstring/comment lines are this
+# codebase's established style (see e.g. processing/classify.py,
+# config/config.yaml) -- not reflowing carefully written prose to satisfy
+# a line-length rule.
+# B905/B007: real findings in processing/classify.py, diagnostics.py,
+# audit_data.py, and one test -- deferred past this tooling-only phase
+# since fixing them means editing processing/test logic, not just config.
+ignore = ["E501", "B905", "B007"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["txdot_overlay"]
