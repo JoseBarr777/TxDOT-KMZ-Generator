@@ -260,3 +260,11 @@ of them evidence that a TxDOT permit is or is not required, nor proof of
 ROW ownership or maintenance jurisdiction beyond what TxDOT's own source data
 claims. Nothing in this project performs or implies a legal ROW
 determination.
+
+## License
+
+This project's code is licensed under the [MIT License](LICENSE). The
+underlying GIS data (TxDOT districts/roadways/city boundaries, Texas county
+boundaries) comes from public TxDOT ArcGIS Online services -- see
+`docs/SOURCE_AUDIT.md` for source details; that data's own usage terms are
+separate from this repository's code license.
