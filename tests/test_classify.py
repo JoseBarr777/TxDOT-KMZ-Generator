@@ -51,7 +51,9 @@ def test_classify_physical_type_local_street():
 
 @pytest.mark.parametrize("hsys", ["FD", "TL"])
 def test_classify_physical_type_other_physical_roadway(hsys):
-    assert classify_physical_type(hsys=hsys, rdbd_id="KG") == PhysicalRoadType.OTHER_PHYSICAL_ROADWAY
+    assert (
+        classify_physical_type(hsys=hsys, rdbd_id="KG") == PhysicalRoadType.OTHER_PHYSICAL_ROADWAY
+    )
 
 
 @pytest.mark.parametrize("hsys", [None, float("nan"), "", "ZZ"])

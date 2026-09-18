@@ -7,6 +7,7 @@ drop_invalid_geometries() call, and undercounted 254 Texas counties as 253
 with no trace of which one or why. Every non-"ok" row now produces a
 GeometryIssue that survives into logs and the audit-data report.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,18 +58,14 @@ def repair_and_flag_geometries(
             issues.append(GeometryIssue(id_value, name, "dropped_null", "geometry is null"))
             keep_mask.append(False)
             final_geoms.append(None)
-            logger.error(
-                "%s: dropping %s (id=%s): geometry is null", context, name, id_value
-            )
+            logger.error("%s: dropping %s (id=%s): geometry is null", context, name, id_value)
             continue
 
         if geom.is_empty:
             issues.append(GeometryIssue(id_value, name, "dropped_empty", "geometry is empty"))
             keep_mask.append(False)
             final_geoms.append(None)
-            logger.error(
-                "%s: dropping %s (id=%s): geometry is empty", context, name, id_value
-            )
+            logger.error("%s: dropping %s (id=%s): geometry is empty", context, name, id_value)
             continue
 
         if not geom.is_valid:

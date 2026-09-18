@@ -1,6 +1,5 @@
 import geopandas as gpd
-import pytest
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from shapely.geometry import MultiPolygon, Point, Polygon
 
 from txdot_overlay.processing.diagnostics import (
     GeometryIssue,
@@ -121,7 +120,5 @@ def test_find_duplicate_ids_reports_repeated_codes():
 
 
 def test_find_duplicate_ids_empty_when_all_unique():
-    gdf = gpd.GeoDataFrame(
-        {"CNTY_NBR": [1, 2, 3], "geometry": [Point(0, 0)] * 3}, crs="EPSG:4326"
-    )
+    gdf = gpd.GeoDataFrame({"CNTY_NBR": [1, 2, 3], "geometry": [Point(0, 0)] * 3}, crs="EPSG:4326")
     assert find_duplicate_ids(gdf, "CNTY_NBR") == {}

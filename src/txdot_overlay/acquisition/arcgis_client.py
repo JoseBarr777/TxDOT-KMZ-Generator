@@ -5,6 +5,7 @@ metadata and GeoJSON features over HTTP. It does not know anything about
 TxDOT-specific fields -- callers inspect metadata before assuming field
 names exist (see acquisition.inspect).
 """
+
 from __future__ import annotations
 
 import time
@@ -62,15 +63,11 @@ class ArcGISLayerClient:
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self.session.get(
-                    url, params=params, timeout=self.timeout_seconds
-                )
+                response = self.session.get(url, params=params, timeout=self.timeout_seconds)
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict) and "error" in payload:
-                    raise ArcGISRequestError(
-                        f"ArcGIS error from {url}: {payload['error']}"
-                    )
+                    raise ArcGISRequestError(f"ArcGIS error from {url}: {payload['error']}")
                 return payload
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc

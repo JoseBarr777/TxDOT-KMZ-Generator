@@ -35,6 +35,7 @@ something this module gets to decide:
   flag set for audit-data to surface.
 - Valid zero and valid False are always PRESENT -- never treated as missing.
 """
+
 from __future__ import annotations
 
 import math

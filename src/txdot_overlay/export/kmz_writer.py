@@ -1,4 +1,5 @@
 """Writes simplekml documents to disk as .kml or .kmz, creating parent directories."""
+
 from __future__ import annotations
 
 from pathlib import Path

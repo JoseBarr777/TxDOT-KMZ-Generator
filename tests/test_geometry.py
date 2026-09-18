@@ -67,9 +67,7 @@ def test_geojson_to_geodataframe_is_wgs84():
 
 
 def test_drop_invalid_geometries_removes_none_and_empty():
-    gdf = gpd.GeoDataFrame(
-        {"geometry": [Point(0, 0), None, LineString([])]}, crs="EPSG:4326"
-    )
+    gdf = gpd.GeoDataFrame({"geometry": [Point(0, 0), None, LineString([])]}, crs="EPSG:4326")
     result = drop_invalid_geometries(gdf)
     assert len(result) == 1
 

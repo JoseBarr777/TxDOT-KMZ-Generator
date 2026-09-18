@@ -7,6 +7,7 @@ bucketed by HSYS/RDWAY_MAINT_AGCY per processing/classify.py's
 classify_other_public_roadway_category, in the fixed order County Roads ->
 City Streets -> Regional Mobility Authority Roads -> Other / Unclassified.
 """
+
 from xml.etree import ElementTree as ET
 
 import geopandas as gpd
@@ -23,7 +24,9 @@ COUNTY_POLY = Polygon([(-95.5, 32.0), (-95.0, 32.0), (-95.0, 32.5), (-95.5, 32.5
 
 def _empty_city_limits(config):
     fields = config.sources["city_limits"].fields
-    return gpd.GeoDataFrame({name: [] for name in fields.values()} | {"geometry": []}, crs="EPSG:4326")
+    return gpd.GeoDataFrame(
+        {name: [] for name in fields.values()} | {"geometry": []}, crs="EPSG:4326"
+    )
 
 
 def _sample_roadways(config):
@@ -75,10 +78,7 @@ def _find_folder(root, name, within=None):
 
 
 def _direct_child_folders(folder):
-    return [
-        f
-        for f in folder.findall(f"{KML_NS}Folder")
-    ]
+    return [f for f in folder.findall(f"{KML_NS}Folder")]
 
 
 def test_other_public_roadways_is_sibling_not_nested_in_txdot_roadways(config):
@@ -115,7 +115,9 @@ def test_rma_maintained_off_system_road_bucketed_separately_from_other_toll_road
     root = _build_kml(config)
     other_public_folder = _find_folder(root, "Other Public Roadways")
     rma_folder = _find_folder(root, "Regional Mobility Authority Roads", within=other_public_folder)
-    other_unclassified_folder = _find_folder(root, "Other / Unclassified", within=other_public_folder)
+    other_unclassified_folder = _find_folder(
+        root, "Other / Unclassified", within=other_public_folder
+    )
     assert rma_folder is not None
     assert other_unclassified_folder is not None
     # One TL row has RDWAY_MAINT_AGCY=16 (RMA) -> Regional Mobility Authority Roads;
@@ -127,10 +129,7 @@ def test_rma_maintained_off_system_road_bucketed_separately_from_other_toll_road
 def test_other_public_roadway_folder_order_matches_hierarchy(config):
     root = _build_kml(config)
     other_public_folder = _find_folder(root, "Other Public Roadways")
-    names = [
-        f.find(f"{KML_NS}name").text
-        for f in _direct_child_folders(other_public_folder)
-    ]
+    names = [f.find(f"{KML_NS}name").text for f in _direct_child_folders(other_public_folder)]
     assert names == [
         "County Roads",
         "City Streets",

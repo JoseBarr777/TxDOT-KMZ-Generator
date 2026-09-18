@@ -5,6 +5,7 @@ GeoJSON already in EPSG:4326 per the GeoJSON spec, but we verify/enforce
 this explicitly here rather than trusting it silently, and this is the one
 place reprojection happens so callers never juggle coordinate systems.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -64,16 +65,12 @@ def clip_to_polygon(
     return clipped
 
 
-def simplify_geometry(
-    gdf: gpd.GeoDataFrame, tolerance_degrees: float
-) -> gpd.GeoDataFrame:
+def simplify_geometry(gdf: gpd.GeoDataFrame, tolerance_degrees: float) -> gpd.GeoDataFrame:
     """Simplify geometry (topology-preserving) to reduce vertex count for performance."""
     if gdf.empty or tolerance_degrees <= 0:
         return gdf
     result = gdf.copy()
-    result["geometry"] = result.geometry.simplify(
-        tolerance_degrees, preserve_topology=True
-    )
+    result["geometry"] = result.geometry.simplify(tolerance_degrees, preserve_topology=True)
     return result
 
 
@@ -93,9 +90,7 @@ def repair_geometry(geometry):
     return repaired
 
 
-def drop_invalid_geometries(
-    gdf: gpd.GeoDataFrame, *, context: str = ""
-) -> gpd.GeoDataFrame:
+def drop_invalid_geometries(gdf: gpd.GeoDataFrame, *, context: str = "") -> gpd.GeoDataFrame:
     """Remove null/empty/invalid geometries, logging how many were skipped."""
     if gdf.empty:
         return gdf

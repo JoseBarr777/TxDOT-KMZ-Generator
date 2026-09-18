@@ -1,4 +1,5 @@
 """Sanity-checks generated KML/KMZ output: well-formedness, links, coordinates, visibility."""
+
 from __future__ import annotations
 
 import zipfile
@@ -69,7 +70,12 @@ def _validate_kml_element(root: ET.Element, *, context: str, report: ValidationR
 
 
 def _check_folder_visibility(
-    root: ET.Element, folder_name: str, expected_visible: bool, *, context: str, report: ValidationReport
+    root: ET.Element,
+    folder_name: str,
+    expected_visible: bool,
+    *,
+    context: str,
+    report: ValidationReport,
 ) -> None:
     for folder in root.iter(f"{KML_NS}Folder"):
         name_el = folder.find(f"{KML_NS}name")
@@ -92,9 +98,7 @@ def validate_master_kml(master_path: Path, config: Config) -> ValidationReport:
         report.add_error(f"Master KML not found: {master_path}")
         return report
 
-    root = _parse_kml_bytes(
-        master_path.read_bytes(), context=str(master_path), report=report
-    )
+    root = _parse_kml_bytes(master_path.read_bytes(), context=str(master_path), report=report)
     if root is None:
         return report
 

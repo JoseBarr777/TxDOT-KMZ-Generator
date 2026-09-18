@@ -17,11 +17,13 @@ matters -- a naive `str(value)` on a NaN float renders the literal text
 "nan"). Values are HTML-escaped and the whole result is CDATA-wrapped so
 simplekml emits the markup unescaped for Google Earth to render as HTML.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape
-from typing import Any, Callable
+from typing import Any
 
 from txdot_overlay.export.formatting import (
     format_count,
@@ -32,12 +34,12 @@ from txdot_overlay.export.formatting import (
     format_traffic_count,
 )
 from txdot_overlay.processing.codes import (
-    decode_admin_agency,
     decode_aces_ctrl,
+    decode_admin_agency,
     decode_dir_trav,
     decode_f_system,
-    decode_hwy_stat,
     decode_hsys,
+    decode_hwy_stat,
     decode_med_type,
     decode_shoulder_type,
 )
@@ -133,7 +135,9 @@ def _build_identity_section(attrs: dict[str, Any], fields: dict[str, str]) -> Po
         _row("Direction of travel", attrs.get(fields["direction_of_travel"]), decode_dir_trav),
         _row("Highway status", attrs.get(fields["highway_status"]), decode_hwy_stat),
         _row("Maintenance agency", attrs.get(fields["maintenance_agency"]), decode_admin_agency),
-        _row("Administrative classification", attrs.get(fields["admin_system"]), decode_admin_agency),
+        _row(
+            "Administrative classification", attrs.get(fields["admin_system"]), decode_admin_agency
+        ),
         _row("Functional system", attrs.get(fields["functional_system"]), decode_f_system),
     ]
     return _section("Identity", rows)
@@ -149,14 +153,22 @@ def _build_dimensions_section(attrs: dict[str, Any], fields: dict[str, str]) -> 
         _row("Median width", attrs.get(fields["median_width"]), format_feet),
         _row("Median type", attrs.get(fields["median_type"]), decode_med_type),
         _row("Inside shoulder width", attrs.get(fields["inside_shoulder_width"]), format_feet),
-        _row("Inside shoulder type", attrs.get(fields["inside_shoulder_type"]), decode_shoulder_type),
+        _row(
+            "Inside shoulder type", attrs.get(fields["inside_shoulder_type"]), decode_shoulder_type
+        ),
         _row("Outside shoulder width", attrs.get(fields["outside_shoulder_width"]), format_feet),
-        _row("Outside shoulder type", attrs.get(fields["outside_shoulder_type"]), decode_shoulder_type),
+        _row(
+            "Outside shoulder type",
+            attrs.get(fields["outside_shoulder_type"]),
+            decode_shoulder_type,
+        ),
     ]
     return _section("Roadway Dimensions", rows)
 
 
-def _build_row_reference_section(attrs: dict[str, Any], fields: dict[str, str]) -> PopupSection | None:
+def _build_row_reference_section(
+    attrs: dict[str, Any], fields: dict[str, str]
+) -> PopupSection | None:
     """ROW_MIN only, always paired with the inventory-reference disclaimer.
 
     Do not use ROW_MIN to generate a ROW polygon or assume the centerline is
@@ -224,7 +236,9 @@ CITY_LIMITS_SOURCE_NOTE = (
 )
 
 
-def _build_city_identity_section(attrs: dict[str, Any], fields: dict[str, str]) -> PopupSection | None:
+def _build_city_identity_section(
+    attrs: dict[str, Any], fields: dict[str, str]
+) -> PopupSection | None:
     rows = [
         _row("City name", attrs.get(fields["name"])),
         # Raw value shown as-is (not decoded into Yes/No) -- unlike the RIF-
@@ -236,7 +250,9 @@ def _build_city_identity_section(attrs: dict[str, Any], fields: dict[str, str]) 
     return _section("Identity", rows)
 
 
-def _build_city_population_section(attrs: dict[str, Any], fields: dict[str, str]) -> PopupSection | None:
+def _build_city_population_section(
+    attrs: dict[str, Any], fields: dict[str, str]
+) -> PopupSection | None:
     row = _row("Population (2022)", attrs.get(fields["population_2022"]), format_count)
     if row is None:
         row = _row("Population (2020)", attrs.get(fields["population_2020"]), format_count)

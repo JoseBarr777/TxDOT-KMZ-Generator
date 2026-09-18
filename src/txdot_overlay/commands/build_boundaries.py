@@ -1,4 +1,5 @@
 """`build-boundaries`: build master.kml with district boundaries and county navigation."""
+
 from __future__ import annotations
 
 from txdot_overlay.config import Config

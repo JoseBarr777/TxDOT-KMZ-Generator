@@ -8,9 +8,9 @@ real source data was handled, not something a synthetic fixture would catch
 -- and is designed to fail loudly with the *reason* rather than pass
 silently on a regression, per the "no silent discard" requirement.
 """
+
 from __future__ import annotations
 
-import geopandas as gpd
 import pytest
 import requests
 

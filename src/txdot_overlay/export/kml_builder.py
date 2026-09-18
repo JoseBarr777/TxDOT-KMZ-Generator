@@ -31,6 +31,7 @@ Structure produced (see README/docs for the full design):
                                                    above and from
                                                    physical-road counts)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -77,6 +78,7 @@ def _render_geometry(geometry, tolerance_degrees: float):
         return geometry
     return geometry.simplify(tolerance_degrees, preserve_topology=True)
 
+
 # On-system physical-road categories only; grade_separated_connector and the
 # off-system "Other Public Roadways" categories are deliberately excluded --
 # they never appear under "TxDOT Roadways" (see add_county_detail_content).
@@ -118,9 +120,7 @@ def build_district_boundaries_folder(
         add_polygon_placemark(
             folder,
             name=str(name),
-            geometry=_render_geometry(
-                row.geometry, config.district_boundary_tolerance_degrees
-            ),
+            geometry=_render_geometry(row.geometry, config.district_boundary_tolerance_degrees),
             style=styles["district_boundary"],
             description=description,
             visibility=config.visibility_defaults["district_placemarks"],
@@ -141,9 +141,7 @@ def build_district_details_folder(
     county_fields = config.sources["counties"].fields
 
     details_folder = parent.newfolder(name="District Details")
-    details_folder.visibility = (
-        1 if config.visibility_defaults["district_details_folder"] else 0
-    )
+    details_folder.visibility = 1 if config.visibility_defaults["district_details_folder"] else 0
 
     district_names = sorted(districts[district_fields["name"]].dropna().unique())
     for district_name in district_names:
@@ -205,9 +203,7 @@ def add_county_detail_content(
     )
 
     boundary_folder = admin_folder.newfolder(name="County Boundary")
-    boundary_folder.visibility = (
-        1 if config.visibility_defaults["county_boundary_folder"] else 0
-    )
+    boundary_folder.visibility = 1 if config.visibility_defaults["county_boundary_folder"] else 0
     add_polygon_placemark(
         boundary_folder,
         name=f"{county_name} County",
@@ -220,9 +216,7 @@ def add_county_detail_content(
     )
 
     city_limits_folder = admin_folder.newfolder(name="City Limits")
-    city_limits_folder.visibility = (
-        1 if config.visibility_defaults["city_limits_folder"] else 0
-    )
+    city_limits_folder.visibility = 1 if config.visibility_defaults["city_limits_folder"] else 0
     _add_city_limits_placemarks(city_limits_folder, city_limits, config, styles)
 
     road_fields = config.sources["roadways"].fields
@@ -234,12 +228,8 @@ def add_county_detail_content(
     ]
 
     roadways_folder = parent_folder.newfolder(name="TxDOT Roadways")
-    roadways_folder.visibility = (
-        1 if config.visibility_defaults["roadways_folder"] else 0
-    )
-    _add_route_category_folders(
-        roadways_folder, on_system_roadways, road_fields, config, styles
-    )
+    roadways_folder.visibility = 1 if config.visibility_defaults["roadways_folder"] else 0
+    _add_route_category_folders(roadways_folder, on_system_roadways, road_fields, config, styles)
 
     if len(off_system_roadways):
         other_public_folder = parent_folder.newfolder(name="Other Public Roadways")
@@ -304,9 +294,7 @@ def _add_route_category_folders(
         category_rows = on_system_roadways[on_system_roadways["route_category"] == category]
         label = config.route_styles[category].label
         category_folder = roadways_folder.newfolder(name=label)
-        category_folder.visibility = (
-            1 if config.visibility_defaults["route_category_folder"] else 0
-        )
+        category_folder.visibility = 1 if config.visibility_defaults["route_category_folder"] else 0
         _add_roadway_placemarks(
             category_folder, category_rows, road_fields, styles[f"route_{category}"]
         )
@@ -384,9 +372,7 @@ def build_single_file_kml(
     build_district_boundaries_folder(kml.document, districts, config, styles)
 
     details_folder = kml.document.newfolder(name="District Details")
-    details_folder.visibility = (
-        1 if config.visibility_defaults["district_details_folder"] else 0
-    )
+    details_folder.visibility = 1 if config.visibility_defaults["district_details_folder"] else 0
 
     in_scope_counties = counties[counties[county_fields["name"]].isin(county_roadways)]
     district_names = sorted(in_scope_counties[county_fields["district_name"]].dropna().unique())

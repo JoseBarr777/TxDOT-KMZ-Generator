@@ -1,4 +1,5 @@
 """Loads and validates config/config.yaml into typed, attribute-accessible objects."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -109,9 +110,7 @@ def load_config(path: Path | str | None = None) -> Config:
         raise ValueError(f"Config file is empty: {config_path}")
 
     try:
-        sources = {
-            key: _parse_source(key, block) for key, block in raw["sources"].items()
-        }
+        sources = {key: _parse_source(key, block) for key, block in raw["sources"].items()}
         styles = raw["styles"]
         route_styles = {
             key: RouteStyleConfig(
@@ -129,9 +128,7 @@ def load_config(path: Path | str | None = None) -> Config:
 
         return Config(
             sources=sources,
-            route_classification={
-                k: v for k, v in raw["route_classification"].items()
-            },
+            route_classification={k: v for k, v in raw["route_classification"].items()},
             district_style=_parse_polygon_style(styles["district_boundary"]),
             county_style=_parse_polygon_style(styles["county_boundary"]),
             city_limits_style=_parse_polygon_style(styles["city_limits_boundary"]),
@@ -143,9 +140,7 @@ def load_config(path: Path | str | None = None) -> Config:
             master_kml_name=raw["output"]["master_kml_name"],
             single_file_kmz_name=raw["output"]["single_file_kmz_name"],
             simplification_enabled=bool(raw["simplification"]["enabled"]),
-            simplification_tolerance_degrees=float(
-                raw["simplification"]["tolerance_degrees"]
-            ),
+            simplification_tolerance_degrees=float(raw["simplification"]["tolerance_degrees"]),
             county_boundary_tolerance_degrees=float(
                 raw["simplification"]["county_boundary_tolerance_degrees"]
             ),
@@ -157,9 +152,7 @@ def load_config(path: Path | str | None = None) -> Config:
             ),
             network_timeout_seconds=float(raw["network"]["timeout_seconds"]),
             network_max_retries=int(raw["network"]["max_retries"]),
-            network_retry_backoff_seconds=float(
-                raw["network"]["retry_backoff_seconds"]
-            ),
+            network_retry_backoff_seconds=float(raw["network"]["retry_backoff_seconds"]),
             network_page_size=int(raw["network"]["page_size"]),
             raw=raw,
         )

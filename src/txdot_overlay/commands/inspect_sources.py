@@ -1,4 +1,5 @@
 """`inspect-sources`: report live ArcGIS metadata for every configured source."""
+
 from __future__ import annotations
 
 from txdot_overlay.acquisition.inspect import format_inspection_report, inspect_source

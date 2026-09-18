@@ -22,6 +22,7 @@ Character ranges are built from integer code points (via chr()) rather
 than typed as literal escape sequences, so this file never embeds an
 actual control byte or noncharacter in its own source text.
 """
+
 from __future__ import annotations
 
 import re

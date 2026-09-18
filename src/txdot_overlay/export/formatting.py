@@ -6,6 +6,7 @@ calling these -- a formatter's job is to make a *present* value readable,
 not to decide whether a value should be shown at all. Passing a missing
 value here is a caller bug, not something this module papers over.
 """
+
 from __future__ import annotations
 
 

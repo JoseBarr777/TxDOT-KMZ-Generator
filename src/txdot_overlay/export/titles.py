@@ -5,6 +5,7 @@ returns a present, non-blank string, falling all the way through to a fixed
 "Unnamed roadway segment" label rather than letting an empty title slip
 through silently.
 """
+
 from __future__ import annotations
 
 import re

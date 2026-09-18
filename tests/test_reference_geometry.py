@@ -15,6 +15,7 @@ The "Reference Geometry" wrapper folder was itself later renamed to
 (see docs/SOURCE_AUDIT.md and README.md) -- Grade-Separated Connectors
 flipped from hidden-by-default to visible-by-default in that same change.
 """
+
 from xml.etree import ElementTree as ET
 
 import geopandas as gpd
@@ -27,6 +28,7 @@ from txdot_overlay.styling.styles import build_all_styles
 KML_NS = "{http://www.opengis.net/kml/2.2}"
 
 COUNTY_POLY = Polygon([(-95.5, 32.0), (-95.0, 32.0), (-95.0, 32.5), (-95.5, 32.5)])
+
 
 def _empty_city_limits(config):
     fields = config.sources["city_limits"].fields

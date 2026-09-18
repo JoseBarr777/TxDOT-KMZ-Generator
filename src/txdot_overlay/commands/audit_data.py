@@ -11,6 +11,7 @@ audit (processing/value_audit.py) and roadway classification tally
 (processing/classify.py) across the combined scope, and writes a
 machine-readable report to disk (default: dist/audits/<scope>_data_quality.json).
 """
+
 from __future__ import annotations
 
 import json
@@ -132,7 +133,9 @@ def _resolve_roadway_scope(config, districts_filter, counties_filter, districts_
     return scope
 
 
-def _classification_tally(combined_roadways: pd.DataFrame, fields: dict[str, str]) -> dict[str, int]:
+def _classification_tally(
+    combined_roadways: pd.DataFrame, fields: dict[str, str]
+) -> dict[str, int]:
     hsys_col = fields["highway_system"]
     rdbd_col = fields["roadbed_id"]
     counts: dict[str, int] = {t.value: 0 for t in PhysicalRoadType}
@@ -141,7 +144,9 @@ def _classification_tally(combined_roadways: pd.DataFrame, fields: dict[str, str
     return counts
 
 
-def _maintenance_agency_tally(combined_roadways: pd.DataFrame, fields: dict[str, str]) -> dict[str, int]:
+def _maintenance_agency_tally(
+    combined_roadways: pd.DataFrame, fields: dict[str, str]
+) -> dict[str, int]:
     agency_col = fields["maintenance_agency"]
     counts: dict[str, int] = {}
     for raw in combined_roadways[agency_col]:
@@ -213,7 +218,9 @@ def run(
                 continue
             seen.add(county_number)
             county_name = row[county_fields["name"]]
-            road_audit, raw_gdf = audit_roadways_for_county(config, cache, county_number, county_name)
+            road_audit, raw_gdf = audit_roadways_for_county(
+                config, cache, county_number, county_name
+            )
             print(road_audit.format_report())
             print()
             if not road_audit.ok:

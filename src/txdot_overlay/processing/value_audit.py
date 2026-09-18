@@ -9,6 +9,7 @@ values before popup normalization" is enforced structurally: this module has
 no dependency on export/descriptions.py or processing/codes.py, only on the
 classification primitives in values.py.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

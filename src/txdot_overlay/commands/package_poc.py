@@ -9,6 +9,7 @@ still resolve the links -- this command verifies that by re-running the
 portability check (export.validate) against the *copied* files, not the
 originals, so it can't pass by accident against the wrong location.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -19,7 +20,13 @@ from txdot_overlay.config import Config
 from txdot_overlay.export.kml_builder import county_kmz_relative_path
 from txdot_overlay.export.validate import validate_master_kml
 from txdot_overlay.logging_setup import get_logger
-from txdot_overlay.pipeline import counties_in_district, find_district_row, get_cache, load_counties, load_districts
+from txdot_overlay.pipeline import (
+    counties_in_district,
+    find_district_row,
+    get_cache,
+    load_counties,
+    load_districts,
+)
 from txdot_overlay.utils import slugify
 
 logger = get_logger(__name__)
@@ -45,7 +52,9 @@ def run(
     district_fields = config.sources["districts"].fields
     resolved_district = district_row[district_fields["name"]]
 
-    logger.info("Rebuilding master.kml and %s District to ensure the package is current", resolved_district)
+    logger.info(
+        "Rebuilding master.kml and %s District to ensure the package is current", resolved_district
+    )
     boundaries_result = build_boundaries.run(config, force_refresh=force_refresh)
     district_result = build_district.run(resolved_district, config, force_refresh=force_refresh)
     if boundaries_result != 0 or district_result != 0:

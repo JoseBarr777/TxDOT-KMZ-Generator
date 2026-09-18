@@ -6,6 +6,7 @@ hidden while its parent stays visible (independently toggleable), and its
 popup omits missing fields through the existing values.is_missing_value
 normalization system rather than leaking "nan"/"None".
 """
+
 from xml.etree import ElementTree as ET
 
 import geopandas as gpd
@@ -123,8 +124,12 @@ def test_city_limits_title_falls_back_for_missing_name():
 def test_city_limits_description_omits_missing_fields(config):
     fields = config.sources["city_limits"].fields
     html = build_city_limits_description_html(
-        {fields["name"]: "Tyler", fields["county_seat_flag"]: None, fields["population_2022"]: None,
-         fields["population_2020"]: None},
+        {
+            fields["name"]: "Tyler",
+            fields["county_seat_flag"]: None,
+            fields["population_2022"]: None,
+            fields["population_2020"]: None,
+        },
         fields,
     )
     assert "nan" not in html.lower()
@@ -137,7 +142,11 @@ def test_city_limits_description_omits_missing_fields(config):
 def test_city_limits_description_includes_population_and_source(config):
     fields = config.sources["city_limits"].fields
     html = build_city_limits_description_html(
-        {fields["name"]: "Tyler", fields["county_seat_flag"]: "Y", fields["population_2022"]: 105000},
+        {
+            fields["name"]: "Tyler",
+            fields["county_seat_flag"]: "Y",
+            fields["population_2022"]: 105000,
+        },
         fields,
     )
     assert "Tyler" in html

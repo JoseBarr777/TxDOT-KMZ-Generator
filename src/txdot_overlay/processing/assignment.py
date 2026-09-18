@@ -8,6 +8,7 @@ as a fallback for rows where the code is missing or does not match any known
 county -- this keeps the common case fast (no geometry operations) while
 still handling bad/unmapped codes correctly.
 """
+
 from __future__ import annotations
 
 import geopandas as gpd
@@ -101,9 +102,7 @@ def assign_county_by_spatial_join(
     result.update(joined)
     still_unmatched = result["assigned_county_name"].isna().sum()
     if still_unmatched:
-        logger.warning(
-            "%d roadway feature(s) could not be assigned to any county", still_unmatched
-        )
+        logger.warning("%d roadway feature(s) could not be assigned to any county", still_unmatched)
     return result
 
 

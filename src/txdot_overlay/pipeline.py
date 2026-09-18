@@ -3,6 +3,7 @@
 Keeps the "fetch (cached) -> GeoDataFrame -> WGS84" plumbing in one place so
 commands only deal with already-clean GeoDataFrames.
 """
+
 from __future__ import annotations
 
 import geopandas as gpd
@@ -45,7 +46,9 @@ def load_and_repair(
     return final_gdf, issues, raw_gdf
 
 
-def _log_issue_summary(label: str, downloaded_count: int, final_count: int, issues: list[GeometryIssue]) -> None:
+def _log_issue_summary(
+    label: str, downloaded_count: int, final_count: int, issues: list[GeometryIssue]
+) -> None:
     repaired = sum(1 for i in issues if i.status == "repaired")
     dropped = sum(1 for i in issues if i.dropped)
     logger.info(
@@ -69,7 +72,9 @@ def _log_issue_summary(label: str, downloaded_count: int, final_count: int, issu
                 )
 
 
-def load_districts(config: Config, cache: DiskCache, *, force_refresh: bool = False) -> gpd.GeoDataFrame:
+def load_districts(
+    config: Config, cache: DiskCache, *, force_refresh: bool = False
+) -> gpd.GeoDataFrame:
     source = config.sources["districts"]
     fields = source.fields
     final_gdf, issues, raw_gdf = load_and_repair(
@@ -84,7 +89,9 @@ def load_districts(config: Config, cache: DiskCache, *, force_refresh: bool = Fa
     return final_gdf
 
 
-def load_counties(config: Config, cache: DiskCache, *, force_refresh: bool = False) -> gpd.GeoDataFrame:
+def load_counties(
+    config: Config, cache: DiskCache, *, force_refresh: bool = False
+) -> gpd.GeoDataFrame:
     source = config.sources["counties"]
     fields = source.fields
     final_gdf, issues, raw_gdf = load_and_repair(
@@ -99,7 +106,9 @@ def load_counties(config: Config, cache: DiskCache, *, force_refresh: bool = Fal
     return final_gdf
 
 
-def load_city_limits(config: Config, cache: DiskCache, *, force_refresh: bool = False) -> gpd.GeoDataFrame:
+def load_city_limits(
+    config: Config, cache: DiskCache, *, force_refresh: bool = False
+) -> gpd.GeoDataFrame:
     """Fetch the statewide city-limits layer (1,227 features -- one page, cheap to cache).
 
     No per-county `where` scoping: the city layer has no county-code column,
@@ -140,7 +149,9 @@ def load_roadways_for_county(
         where=where,
         force_refresh=force_refresh,
     )
-    _log_issue_summary(f"{source.label} (county={county_number})", len(raw_gdf), len(final_gdf), issues)
+    _log_issue_summary(
+        f"{source.label} (county={county_number})", len(raw_gdf), len(final_gdf), issues
+    )
     return final_gdf
 
 

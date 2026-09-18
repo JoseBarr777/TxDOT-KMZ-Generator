@@ -14,6 +14,7 @@ states what the source data claims about maintenance responsibility; it is
 not evidence about ROW ownership or permit jurisdiction, and callers must
 not treat it as such.
 """
+
 from __future__ import annotations
 
 from txdot_overlay.values import is_missing_value
@@ -50,8 +51,28 @@ HSYS_LABELS: dict[str, str] = {
 }
 HSYS_ON_SYSTEM_CODES: frozenset[str] = frozenset(
     {
-        "BF", "BI", "BS", "BU", "FM", "FS", "IH", "PA", "PR", "RE", "RM",
-        "RP", "RR", "RS", "RU", "SA", "SH", "SL", "SS", "UA", "UP", "US",
+        "BF",
+        "BI",
+        "BS",
+        "BU",
+        "FM",
+        "FS",
+        "IH",
+        "PA",
+        "PR",
+        "RE",
+        "RM",
+        "RP",
+        "RR",
+        "RS",
+        "RU",
+        "SA",
+        "SH",
+        "SL",
+        "SS",
+        "UA",
+        "UP",
+        "US",
     }
 )
 HSYS_OFF_SYSTEM_CODES: frozenset[str] = frozenset({"CR", "FD", "LS", "TL"})

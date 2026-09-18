@@ -11,6 +11,7 @@ request below what was asked for: it under-fetched (dropped every feature
 past the first capped page) and would have skipped records had it not
 already stopped.
 """
+
 import responses
 
 from txdot_overlay.acquisition.arcgis_client import ArcGISLayerClient
@@ -42,28 +43,52 @@ def test_query_geojson_all_paginates_past_a_server_side_cap_below_page_size():
         responses.GET,
         f"{LAYER_URL}/query",
         json=first_page,
-        match=[responses.matchers.query_param_matcher({
-            "where": "1=1", "outFields": "*", "returnGeometry": "true",
-            "resultOffset": "0", "f": "geojson", "resultRecordCount": "2000",
-        })],
+        match=[
+            responses.matchers.query_param_matcher(
+                {
+                    "where": "1=1",
+                    "outFields": "*",
+                    "returnGeometry": "true",
+                    "resultOffset": "0",
+                    "f": "geojson",
+                    "resultRecordCount": "2000",
+                }
+            )
+        ],
     )
     responses.add(
         responses.GET,
         f"{LAYER_URL}/query",
         json=second_page,
-        match=[responses.matchers.query_param_matcher({
-            "where": "1=1", "outFields": "*", "returnGeometry": "true",
-            "resultOffset": "1000", "f": "geojson", "resultRecordCount": "2000",
-        })],
+        match=[
+            responses.matchers.query_param_matcher(
+                {
+                    "where": "1=1",
+                    "outFields": "*",
+                    "returnGeometry": "true",
+                    "resultOffset": "1000",
+                    "f": "geojson",
+                    "resultRecordCount": "2000",
+                }
+            )
+        ],
     )
     responses.add(
         responses.GET,
         f"{LAYER_URL}/query",
         json=third_page_empty,
-        match=[responses.matchers.query_param_matcher({
-            "where": "1=1", "outFields": "*", "returnGeometry": "true",
-            "resultOffset": "1227", "f": "geojson", "resultRecordCount": "2000",
-        })],
+        match=[
+            responses.matchers.query_param_matcher(
+                {
+                    "where": "1=1",
+                    "outFields": "*",
+                    "returnGeometry": "true",
+                    "resultOffset": "1227",
+                    "f": "geojson",
+                    "resultRecordCount": "2000",
+                }
+            )
+        ],
     )
 
     client = ArcGISLayerClient(LAYER_URL, max_retries=1)
@@ -83,23 +108,35 @@ def test_query_geojson_all_stops_on_empty_page_when_under_page_size():
         responses.GET,
         f"{LAYER_URL}/query",
         json=single_page,
-        match=[responses.matchers.query_param_matcher(
-            {
-                "where": "1=1", "outFields": "*", "returnGeometry": "true",
-                "resultOffset": "0", "f": "geojson", "resultRecordCount": "2000",
-            }
-        )],
+        match=[
+            responses.matchers.query_param_matcher(
+                {
+                    "where": "1=1",
+                    "outFields": "*",
+                    "returnGeometry": "true",
+                    "resultOffset": "0",
+                    "f": "geojson",
+                    "resultRecordCount": "2000",
+                }
+            )
+        ],
     )
     responses.add(
         responses.GET,
         f"{LAYER_URL}/query",
         json=empty_page,
-        match=[responses.matchers.query_param_matcher(
-            {
-                "where": "1=1", "outFields": "*", "returnGeometry": "true",
-                "resultOffset": "254", "f": "geojson", "resultRecordCount": "2000",
-            }
-        )],
+        match=[
+            responses.matchers.query_param_matcher(
+                {
+                    "where": "1=1",
+                    "outFields": "*",
+                    "returnGeometry": "true",
+                    "resultOffset": "254",
+                    "f": "geojson",
+                    "resultRecordCount": "2000",
+                }
+            )
+        ],
     )
 
     client = ArcGISLayerClient(LAYER_URL, max_retries=1)

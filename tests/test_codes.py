@@ -1,5 +1,3 @@
-import pytest
-
 from txdot_overlay.processing import codes
 
 

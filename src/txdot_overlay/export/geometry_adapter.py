@@ -4,6 +4,7 @@ Isolated from kml_builder so the "how do I turn a shapely Polygon/LineString
 (incl. Multi* variants) into simplekml calls" logic has one place to live
 and one place to test.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -16,7 +17,9 @@ from txdot_overlay.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
-def _polygon_boundaries(polygon) -> tuple[list[tuple[float, float]], list[list[tuple[float, float]]]]:
+def _polygon_boundaries(
+    polygon,
+) -> tuple[list[tuple[float, float]], list[list[tuple[float, float]]]]:
     outer = list(polygon.exterior.coords)
     inner = [list(ring.coords) for ring in polygon.interiors]
     return outer, inner

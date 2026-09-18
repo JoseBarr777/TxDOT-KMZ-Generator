@@ -67,23 +67,21 @@ def test_master_kml_default_visibility_matches_config(config):
     root = ET.fromstring(kml.kml())
 
     boundaries_folder = _folder(root, "District Boundaries")
-    assert _is_visible(boundaries_folder) == config.visibility_defaults[
-        "district_boundaries_folder"
-    ]
+    assert (
+        _is_visible(boundaries_folder) == config.visibility_defaults["district_boundaries_folder"]
+    )
     assert (
         _placemark_visibility(boundaries_folder, "Alpha")
         == config.visibility_defaults["district_placemarks"]
     )
 
     details_folder = _folder(root, "District Details")
-    assert _is_visible(details_folder) == config.visibility_defaults[
-        "district_details_folder"
-    ]
+    assert _is_visible(details_folder) == config.visibility_defaults["district_details_folder"]
 
     alpha_district_folder = _folder(details_folder, "Alpha")
-    assert _is_visible(alpha_district_folder) == config.visibility_defaults[
-        "district_detail_folder"
-    ]
+    assert (
+        _is_visible(alpha_district_folder) == config.visibility_defaults["district_detail_folder"]
+    )
 
     network_links = alpha_district_folder.findall(f"{KML_NS}NetworkLink")
     assert len(network_links) == 1

@@ -1,4 +1,5 @@
 """`build-county`: build one county's detail KMZ (county boundary + classified roadways)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,7 +19,11 @@ from txdot_overlay.pipeline import (
 )
 from txdot_overlay.processing.assignment import assign_counties_and_districts
 from txdot_overlay.processing.classify import classify_routes
-from txdot_overlay.processing.geometry import clip_to_polygon, drop_invalid_geometries, simplify_geometry
+from txdot_overlay.processing.geometry import (
+    clip_to_polygon,
+    drop_invalid_geometries,
+    simplify_geometry,
+)
 from txdot_overlay.styling.styles import build_all_styles
 
 logger = get_logger(__name__)
@@ -40,7 +45,9 @@ def select_city_limits_for_county(
     """
     if city_limits.empty:
         return city_limits
-    matched = gpd.sjoin(city_limits, single_county_gdf[["geometry"]], predicate="intersects", how="inner")
+    matched = gpd.sjoin(
+        city_limits, single_county_gdf[["geometry"]], predicate="intersects", how="inner"
+    )
     selected = city_limits.loc[matched.index.unique()]
     clipped = clip_to_polygon(selected, single_county_gdf)
     return drop_invalid_geometries(clipped, context="city limits")
@@ -67,9 +74,7 @@ def build_county(
     district_name = county_row[county_fields["district_name"]]
     county_number = county_row[county_fields["number"]]
 
-    roadways = load_roadways_for_county(
-        config, cache, county_number, force_refresh=force_refresh
-    )
+    roadways = load_roadways_for_county(config, cache, county_number, force_refresh=force_refresh)
     logger.info(
         "%s County: %d raw roadway feature(s) fetched (CO=%s)",
         resolved_name,

@@ -1,4 +1,5 @@
 """Command-line entry point: `python -m txdot_overlay <command> ...`."""
+
 from __future__ import annotations
 
 import argparse

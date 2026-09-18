@@ -2,9 +2,7 @@ from txdot_overlay.export.descriptions import build_description_html
 
 
 def test_escapes_html_special_characters_in_values():
-    html = build_description_html(
-        {"STE_NAM": "Smith & Jones <Rd>"}, fields=["STE_NAM"]
-    )
+    html = build_description_html({"STE_NAM": "Smith & Jones <Rd>"}, fields=["STE_NAM"])
     assert "&amp;" in html
     assert "&lt;Rd&gt;" in html
     assert "<Rd>" not in html
@@ -17,9 +15,7 @@ def test_wraps_output_in_cdata():
 
 
 def test_only_includes_requested_fields():
-    html = build_description_html(
-        {"PUBLIC": "shown", "INTERNAL_ONLY": "hidden"}, fields=["PUBLIC"]
-    )
+    html = build_description_html({"PUBLIC": "shown", "INTERNAL_ONLY": "hidden"}, fields=["PUBLIC"])
     assert "shown" in html
     assert "hidden" not in html
 

@@ -1,4 +1,5 @@
 """Builds simplekml Style objects from configured colors/widths."""
+
 from __future__ import annotations
 
 import simplekml
@@ -17,9 +18,7 @@ def polygon_style(style_config: PolygonStyleConfig) -> simplekml.Style:
     style.linestyle.width = style_config.line_width
     style.polystyle.fill = 1 if style_config.fill else 0
     style.polystyle.outline = 1
-    style.polystyle.color = hex_to_kml_color(
-        style_config.fill_color, style_config.fill_opacity
-    )
+    style.polystyle.color = hex_to_kml_color(style_config.fill_color, style_config.fill_opacity)
     return style
 
 

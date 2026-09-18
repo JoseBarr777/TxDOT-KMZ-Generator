@@ -3,6 +3,7 @@
 KML colors are `aabbggrr` hex strings: alpha, then blue/green/red -- the
 reverse byte order from CSS/#RRGGBB, with alpha first instead of last.
 """
+
 from __future__ import annotations
 
 import re

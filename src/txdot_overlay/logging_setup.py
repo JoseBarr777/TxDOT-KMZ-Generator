@@ -1,4 +1,5 @@
 """Shared logging configuration for the CLI and its commands."""
+
 from __future__ import annotations
 
 import logging

@@ -1,4 +1,5 @@
 """Small shared helpers with no natural home in a single module."""
+
 from __future__ import annotations
 
 import re

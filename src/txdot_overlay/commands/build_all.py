@@ -4,6 +4,7 @@ Scope with --district to keep this to a proof-of-concept subset (e.g. just
 Tyler) instead of all 254 counties statewide -- see the project README for
 why the statewide run should be validated at small scale first.
 """
+
 from __future__ import annotations
 
 import geopandas as gpd
@@ -14,7 +15,6 @@ from txdot_overlay.export.kml_builder import build_master_kml, build_single_file
 from txdot_overlay.export.kmz_writer import save_kml, save_kmz
 from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.pipeline import (
-    counties_in_district,
     get_cache,
     load_city_limits,
     load_counties,
@@ -23,7 +23,11 @@ from txdot_overlay.pipeline import (
 )
 from txdot_overlay.processing.assignment import assign_counties_and_districts
 from txdot_overlay.processing.classify import classify_routes
-from txdot_overlay.processing.geometry import clip_to_polygon, drop_invalid_geometries, simplify_geometry
+from txdot_overlay.processing.geometry import (
+    clip_to_polygon,
+    drop_invalid_geometries,
+    simplify_geometry,
+)
 from txdot_overlay.styling.styles import build_all_styles
 
 logger = get_logger(__name__)
@@ -111,7 +115,9 @@ def _rebuild_processed_roadways(county_row, counties, city_limits, config, cache
     single_county_gdf = counties.loc[[county_row.name]]
     roadways = assign_counties_and_districts(roadways, single_county_gdf, config)
     roadways = clip_to_polygon(roadways, single_county_gdf)
-    roadways = drop_invalid_geometries(roadways, context=f"{county_row[county_fields['name']]} (single-file)")
+    roadways = drop_invalid_geometries(
+        roadways, context=f"{county_row[county_fields['name']]} (single-file)"
+    )
     roadways = classify_routes(roadways, config)
     if config.simplification_enabled:
         roadways = simplify_geometry(roadways, config.simplification_tolerance_degrees)

@@ -7,6 +7,7 @@ Each cache entry is a single JSON file containing:
     }
 so downstream consumers always know where a dataset came from and how old it is.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -95,9 +96,7 @@ class DiskCache:
         """Return a fresh cache entry, calling fetch_fn() -> dict only on miss/stale."""
         cached = self.get(key)
         if cached is not None and not cached.is_stale(max_age_hours):
-            logger.info(
-                "Cache hit for %s (fetched %s)", key, cached.retrieved_at.isoformat()
-            )
+            logger.info("Cache hit for %s (fetched %s)", key, cached.retrieved_at.isoformat())
             return cached
         logger.info("Cache miss/stale for %s; fetching from %s", key, source_url)
         data = fetch_fn()

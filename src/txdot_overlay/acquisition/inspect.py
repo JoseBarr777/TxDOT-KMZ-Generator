@@ -1,8 +1,8 @@
 """Inspects ArcGIS service/layer metadata so field names are never assumed."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import requests
 
@@ -76,16 +76,13 @@ def inspect_source(
         max_retries=max_retries,
         retry_backoff_seconds=retry_backoff_seconds,
     )
-    available_layers = list_service_layers(
-        source.service_url, timeout_seconds=timeout_seconds
-    )
+    available_layers = list_service_layers(source.service_url, timeout_seconds=timeout_seconds)
     metadata = client.get_metadata()
     record_count = client.count()
 
     field_names = set(metadata.field_names)
     configured_fields_present = {
-        field_key: (field_name in field_names)
-        for field_key, field_name in source.fields.items()
+        field_key: (field_name in field_names) for field_key, field_name in source.fields.items()
     }
 
     return SourceInspection(
@@ -113,9 +110,7 @@ def format_inspection_report(inspection: SourceInspection) -> str:
     lines.append(f"Geometry type:      {inspection.metadata.geometry_type}")
     lines.append(f"Spatial reference:  EPSG:{inspection.metadata.spatial_reference_wkid}")
     lines.append(f"Max record count:   {inspection.metadata.max_record_count}")
-    lines.append(
-        f"Query formats:      {', '.join(inspection.metadata.supported_query_formats)}"
-    )
+    lines.append(f"Query formats:      {', '.join(inspection.metadata.supported_query_formats)}")
     lines.append(f"Record count:       {inspection.record_count}")
     lines.append(f"Total fields:       {len(inspection.metadata.fields)}")
     lines.append("Configured fields:")

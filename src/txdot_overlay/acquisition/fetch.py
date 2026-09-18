@@ -1,4 +1,5 @@
 """Fetches feature data for a configured source, transparently caching results."""
+
 from __future__ import annotations
 
 from typing import Any

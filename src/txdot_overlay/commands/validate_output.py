@@ -1,4 +1,5 @@
 """`validate-output`: sanity-check generated KML/KMZ files."""
+
 from __future__ import annotations
 
 from txdot_overlay.config import Config

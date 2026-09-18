@@ -1,5 +1,4 @@
 import pandas as pd
-import pytest
 
 from txdot_overlay.processing.value_audit import audit_field, audit_fields
 
