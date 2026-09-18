@@ -20,6 +20,7 @@ from txdot_overlay.processing.diagnostics import find_duplicate_ids
 EXPECTED_COUNTY_COUNT = 254
 
 
+@pytest.mark.network
 def test_all_254_texas_counties_are_processed(config):
     """Either all 254 counties survive (repaired if necessary), or the
     shortfall is explicitly named -- never a silent undercount.

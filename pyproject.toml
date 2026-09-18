@@ -33,6 +33,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "network: exercises a live external service call (may be served from the on-disk cache); excluded from CI's fast job via `pytest -m \"not network\"`",
+]
 
 [tool.ruff]
 line-length = 100
