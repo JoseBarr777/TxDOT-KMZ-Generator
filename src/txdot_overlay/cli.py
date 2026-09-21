@@ -11,7 +11,9 @@ from txdot_overlay.commands import (
     build_all,
     build_boundaries,
     build_county,
+    build_distribution,
     build_district,
+    generate_manifest,
     inspect_sources,
     package_poc,
     validate_output,
@@ -73,7 +75,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also emit one combined KMZ with everything inlined (no NetworkLinks)",
     )
 
+    subparsers.add_parser(
+        "build-distribution",
+        help="Build per-district NetworkLink KMLs and administrative-only boundary artifacts",
+    )
+
     subparsers.add_parser("validate-output", help="Sanity-check generated KML/KMZ output")
+
+    subparsers.add_parser(
+        "generate-manifest",
+        help="Write manifest.json describing every valid, currently-built artifact",
+    )
 
     audit_parser = subparsers.add_parser(
         "audit-data",
@@ -132,8 +144,12 @@ def main(argv: list[str] | None = None) -> int:
             single_file=args.single_file_kmz,
             force_refresh=args.force_refresh,
         )
+    if args.command == "build-distribution":
+        return build_distribution.run(config, force_refresh=args.force_refresh)
     if args.command == "validate-output":
         return validate_output.run(config)
+    if args.command == "generate-manifest":
+        return generate_manifest.run(config, force_refresh=args.force_refresh)
     if args.command == "audit-data":
         audit_output_dir = Path(args.audit_output_dir) if args.audit_output_dir else None
         return audit_data.run(

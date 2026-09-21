@@ -10,6 +10,7 @@ from __future__ import annotations
 import geopandas as gpd
 
 from txdot_overlay.commands.build_county import build_county, select_city_limits_for_county
+from txdot_overlay.commands.build_distribution import build_distribution_artifacts
 from txdot_overlay.config import Config
 from txdot_overlay.export.kml_builder import build_master_kml, build_single_file_kml
 from txdot_overlay.export.kmz_writer import save_kml, save_kmz
@@ -49,6 +50,10 @@ def run(
 
     master_kml = build_master_kml(districts, counties, config, style_resolver)
     save_kml(master_kml, config.output_dir / config.master_kml_name)
+
+    # Boundary-only products: free here, since the three source GeoDataFrames
+    # they need are already loaded above.
+    build_distribution_artifacts(config, districts, counties, city_limits, style_resolver)
 
     if districts_filter:
         scope = counties[

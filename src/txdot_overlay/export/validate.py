@@ -92,13 +92,57 @@ def _check_folder_visibility(
     report.add_warning(f"{context}: folder {folder_name!r} not found")
 
 
+def _load_kml_root(path: Path, report: ValidationReport) -> ET.Element | None:
+    if not path.exists():
+        report.add_error(f"KML not found: {path}")
+        return None
+    return _parse_kml_bytes(path.read_bytes(), context=str(path), report=report)
+
+
+def _check_network_link_targets(root: ET.Element, kml_path: Path, report: ValidationReport) -> None:
+    """Resolve every NetworkLink href relative to the document's own directory.
+
+    Unbuilt targets are warnings, not errors: master.kml and each district
+    KML legitimately reference counties that a scoped build hasn't produced
+    yet. Whether that shortfall blocks a release is the manifest's call
+    (see export/manifest.py's completeness model), not this check's.
+    """
+    base_dir = kml_path.parent
+    missing_links = 0
+    for link_el in root.iter(f"{KML_NS}href"):
+        href = link_el.text
+        if not href:
+            continue
+        target = (base_dir / href).resolve()
+        if not target.exists():
+            missing_links += 1
+            report.add_warning(
+                f"{kml_path}: NetworkLink target does not exist yet: {href} "
+                "(expected until its build-county/build-district run)"
+            )
+    if missing_links:
+        logger.info("%s: %d NetworkLink target(s) not yet built", kml_path, missing_links)
+
+
+def validate_kml_document(kml_path: Path) -> ValidationReport:
+    """Generic .kml checks: present, well-formed, sane coordinates, links resolve.
+
+    Used for any plain-KML artifact with no document-specific structure to
+    assert -- currently the per-district NetworkLink KMLs. master.kml has
+    its own validator below that adds the folder checks it guarantees.
+    """
+    report = ValidationReport()
+    root = _load_kml_root(kml_path, report)
+    if root is None:
+        return report
+    _validate_kml_element(root, context=str(kml_path), report=report)
+    _check_network_link_targets(root, kml_path, report)
+    return report
+
+
 def validate_master_kml(master_path: Path, config: Config) -> ValidationReport:
     report = ValidationReport()
-    if not master_path.exists():
-        report.add_error(f"Master KML not found: {master_path}")
-        return report
-
-    root = _parse_kml_bytes(master_path.read_bytes(), context=str(master_path), report=report)
+    root = _load_kml_root(master_path, report)
     if root is None:
         return report
 
@@ -117,30 +161,21 @@ def validate_master_kml(master_path: Path, config: Config) -> ValidationReport:
         context=str(master_path),
         report=report,
     )
-
-    output_dir = master_path.parent
-    missing_links = 0
-    for link_el in root.iter(f"{KML_NS}href"):
-        href = link_el.text
-        if not href:
-            continue
-        target = (output_dir / href).resolve()
-        if not target.exists():
-            missing_links += 1
-            report.add_warning(
-                f"{master_path}: NetworkLink target does not exist yet: {href} "
-                "(expected until its build-county/build-district run)"
-            )
-    if missing_links:
-        logger.info("%d NetworkLink target(s) not yet built", missing_links)
-
+    _check_network_link_targets(root, master_path, report)
     return report
 
 
-def validate_county_kmz(kmz_path: Path) -> ValidationReport:
+def validate_kmz(kmz_path: Path) -> ValidationReport:
+    """Generic .kmz checks: valid zip, contains KML, well-formed, sane coordinates.
+
+    Applies to every KMZ this project ships -- county detail KMZs, the
+    administrative-boundary collections, and the optional single-file
+    build -- none of which need structure assertions beyond being a
+    readable, well-formed archive.
+    """
     report = ValidationReport()
     if not kmz_path.exists():
-        report.add_error(f"County KMZ not found: {kmz_path}")
+        report.add_error(f"KMZ not found: {kmz_path}")
         return report
 
     try:
@@ -161,15 +196,29 @@ def validate_county_kmz(kmz_path: Path) -> ValidationReport:
 
 
 def validate_output(config: Config) -> ValidationReport:
-    """Validate the master KML and every county KMZ that exists on disk."""
+    """Validate every KML/KMZ artifact that currently exists on disk.
+
+    Covers master.kml, the per-district NetworkLink KMLs, every county
+    detail KMZ, and the administrative-boundary artifacts. Paths are sorted
+    so the report reads the same way on every run.
+    """
     master_path = config.output_dir / config.master_kml_name
     report = validate_master_kml(master_path, config)
 
+    def merge(sub_report: ValidationReport) -> None:
+        report.errors.extend(sub_report.errors)
+        report.warnings.extend(sub_report.warnings)
+
     districts_dir = config.output_dir / "districts"
     if districts_dir.exists():
+        for kml_path in sorted(districts_dir.glob("*.kml")):
+            merge(validate_kml_document(kml_path))
         for kmz_path in sorted(districts_dir.glob("*/*.kmz")):
-            sub_report = validate_county_kmz(kmz_path)
-            report.errors.extend(sub_report.errors)
-            report.warnings.extend(sub_report.warnings)
+            merge(validate_kmz(kmz_path))
+
+    boundaries_dir = config.output_dir / "boundaries"
+    if boundaries_dir.exists():
+        for kmz_path in sorted(boundaries_dir.glob("*.kmz")):
+            merge(validate_kmz(kmz_path))
 
     return report

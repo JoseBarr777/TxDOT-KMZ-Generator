@@ -1,4 +1,4 @@
-"""Builds the master KML and per-county detail KML documents.
+"""Builds the master KML, per-county detail KMLs, and the distribution artifacts.
 
 Structure produced (see README/docs for the full design):
 
@@ -30,6 +30,27 @@ Structure produced (see README/docs for the full design):
                                                    the two roadway folders
                                                    above and from
                                                    physical-road counts)
+
+Distribution artifacts (browse-by-district and administrative-only), all
+built from the same district/county/city GeoDataFrames the overlay uses:
+
+    <District> District (Document, districts/<d>.kml)
+      District Boundary                         (Folder, visible)
+        <District> polygon placemark
+      County Details                            (Folder, visible)
+        NetworkLink -> <d>/<c>.kmz               (one per county in this
+                                                   district; relative to the
+                                                   KML's own directory, so
+                                                   no roadway geometry is
+                                                   duplicated here)
+
+    TxDOT District Boundaries      (Document)   districts only
+    Texas County Boundaries        (Document)   counties only
+    Texas City Boundaries          (Document)   cities only
+    Texas Administrative Boundaries (Document)  all three as independently
+                                                 toggleable sibling Folders
+
+None of the administrative-only documents carry roadway geometry.
 """
 
 from __future__ import annotations
@@ -96,6 +117,33 @@ ROUTE_CATEGORY_ORDER = [
 def county_kmz_relative_path(district_name: str, county_name: str) -> Path:
     """The path (relative to the output directory) a county's detail KMZ lives at."""
     return Path("districts") / slugify(district_name) / f"{slugify(county_name)}.kmz"
+
+
+def district_kml_relative_path(district_name: str) -> Path:
+    """The path (relative to the output directory) a district's NetworkLink KML lives at.
+
+    Deliberately a sibling of the district's own county directory
+    (districts/tyler.kml next to districts/tyler/), so its NetworkLink hrefs
+    are short relative paths ("tyler/smith.kmz") that keep resolving when the
+    whole output tree is moved, zipped, or served from an object store.
+    """
+    return Path("districts") / f"{slugify(district_name)}.kml"
+
+
+def _sorted_by(gdf: gpd.GeoDataFrame, *fields: str) -> gpd.GeoDataFrame:
+    """Stable, source-order-independent ordering for deterministic output."""
+    return gdf.sort_values(list(fields), kind="stable")
+
+
+# Administrative-only artifacts ship as KMZ: these are statewide polygon
+# collections whose plain-KML form is megabytes of coordinate text and
+# compresses ~3x (measured: the combined document is ~15MB of KML in a
+# ~4.9MB KMZ). Paths live here, next to the other artifact path
+# conventions, so both the builder command and the manifest agree on them.
+DISTRICT_BOUNDARIES_KMZ = Path("boundaries") / "district_boundaries.kmz"
+COUNTY_BOUNDARIES_KMZ = Path("boundaries") / "county_boundaries.kmz"
+CITY_BOUNDARIES_KMZ = Path("boundaries") / "city_boundaries.kmz"
+ADMIN_BOUNDARIES_KMZ = Path("boundaries") / "administrative_boundaries.kmz"
 
 
 def build_district_boundaries_folder(
@@ -404,6 +452,179 @@ def build_single_file_kml(
                 style_resolver=style_resolver,
             )
 
+    return kml
+
+
+def build_county_boundaries_folder(
+    parent: Any,
+    counties: gpd.GeoDataFrame,
+    config: Config,
+    style_resolver: StyleResolver,
+) -> simplekml.Folder:
+    """Add a statewide "County Boundaries" folder as a child of `parent`.
+
+    Renders the same geometry/style/description/tolerance as the single
+    county boundary inside each county detail KMZ, so a county reads
+    identically whether it arrives via the boundaries-only artifact or the
+    full overlay.
+    """
+    fields = config.sources["counties"].fields
+    folder = parent.newfolder(name="County Boundaries")
+    folder.visibility = 1 if config.visibility_defaults["county_boundary_folder"] else 0
+
+    skipped = 0
+    for _, row in _sorted_by(counties, fields["name"]).iterrows():
+        if row.geometry is None or row.geometry.is_empty:
+            skipped += 1
+            continue
+        add_polygon_placemark(
+            folder,
+            name=f"{row[fields['name']]} County",
+            geometry=_render_geometry(row.geometry, config.county_boundary_tolerance_degrees),
+            style=style_resolver.county_boundary(),
+            description=build_description_html(
+                row.to_dict(), config.sources["counties"].description_fields
+            ),
+            visibility=True,
+        )
+    if skipped:
+        logger.warning("Skipped %d count(y/ies) with missing/empty geometry", skipped)
+    return folder
+
+
+def build_city_limits_folder(
+    parent: Any,
+    city_limits: gpd.GeoDataFrame,
+    config: Config,
+    style_resolver: StyleResolver,
+) -> simplekml.Folder:
+    """Add a statewide "City Limits" folder as a child of `parent`."""
+    fields = config.sources["city_limits"].fields
+    folder = parent.newfolder(name="City Limits")
+    folder.visibility = 1 if config.visibility_defaults["city_limits_folder"] else 0
+    _add_city_limits_placemarks(
+        folder,
+        _sorted_by(city_limits, fields["name"], fields["object_id"]),
+        config,
+        style_resolver,
+    )
+    return folder
+
+
+def build_district_kml(
+    *,
+    district_name: str,
+    district_attrs: dict[str, Any],
+    district_geometry,
+    district_counties: gpd.GeoDataFrame,
+    config: Config,
+    style_resolver: StyleResolver,
+) -> simplekml.Kml:
+    """Build one district's lightweight browse-by-district KML.
+
+    Carries the district boundary plus a NetworkLink per county in that
+    district, pointing at the *existing* detailed county KMZs -- no roadway
+    geometry is copied in, so this stays a few KB regardless of how large
+    the district's road network is, and a county's data has exactly one
+    on-disk home no matter which entry point a user downloads.
+    """
+    county_fields = config.sources["counties"].fields
+
+    kml = simplekml.Kml()
+    kml.document.name = f"{district_name} District"
+
+    boundary_folder = kml.document.newfolder(name="District Boundary")
+    boundary_folder.visibility = (
+        1 if config.visibility_defaults["district_boundaries_folder"] else 0
+    )
+    if district_geometry is not None and not district_geometry.is_empty:
+        add_polygon_placemark(
+            boundary_folder,
+            name=f"{district_name} District",
+            geometry=_render_geometry(
+                district_geometry, config.district_boundary_tolerance_degrees
+            ),
+            style=style_resolver.district_boundary(),
+            description=build_description_html(
+                district_attrs, config.sources["districts"].description_fields
+            ),
+            visibility=True,
+        )
+    else:
+        logger.warning("District %s has missing/empty geometry; boundary omitted", district_name)
+
+    counties_visible = config.visibility_defaults["district_kml_counties_folder"]
+    counties_folder = kml.document.newfolder(name="County Details")
+    counties_folder.visibility = 1 if counties_visible else 0
+
+    link_base = district_kml_relative_path(district_name).parent
+    for _, county_row in _sorted_by(district_counties, county_fields["name"]).iterrows():
+        county_name = county_row[county_fields["name"]]
+        href = (
+            county_kmz_relative_path(district_name, county_name).relative_to(link_base).as_posix()
+        )
+        network_link = counties_folder.newnetworklink(name=str(county_name))
+        network_link.link.href = href
+        network_link.link.refreshmode = simplekml.RefreshMode.onchange
+        network_link.visibility = 1 if counties_visible else 0
+
+    return kml
+
+
+def build_district_boundaries_kml(
+    districts: gpd.GeoDataFrame, config: Config, style_resolver: StyleResolver
+) -> simplekml.Kml:
+    """Statewide TxDOT district polygons only -- no roads, no county NetworkLinks."""
+    fields = config.sources["districts"].fields
+    kml = simplekml.Kml()
+    kml.document.name = "TxDOT District Boundaries"
+    build_district_boundaries_folder(
+        kml.document, _sorted_by(districts, fields["name"]), config, style_resolver
+    )
+    return kml
+
+
+def build_county_boundaries_kml(
+    counties: gpd.GeoDataFrame, config: Config, style_resolver: StyleResolver
+) -> simplekml.Kml:
+    """Statewide Texas county polygons only -- no roads."""
+    kml = simplekml.Kml()
+    kml.document.name = "Texas County Boundaries"
+    build_county_boundaries_folder(kml.document, counties, config, style_resolver)
+    return kml
+
+
+def build_city_boundaries_kml(
+    city_limits: gpd.GeoDataFrame, config: Config, style_resolver: StyleResolver
+) -> simplekml.Kml:
+    """Statewide city-limit polygons only -- no roads."""
+    kml = simplekml.Kml()
+    kml.document.name = "Texas City Boundaries"
+    build_city_limits_folder(kml.document, city_limits, config, style_resolver)
+    return kml
+
+
+def build_admin_boundaries_kml(
+    districts: gpd.GeoDataFrame,
+    counties: gpd.GeoDataFrame,
+    city_limits: gpd.GeoDataFrame,
+    config: Config,
+    style_resolver: StyleResolver,
+) -> simplekml.Kml:
+    """All three administrative layers in one document -- no roads.
+
+    Each layer is its own top-level Folder (fixed order: districts,
+    counties, cities) so Google Earth can toggle them independently.
+    """
+    fields = config.sources["districts"].fields
+    kml = simplekml.Kml()
+    kml.document.name = "Texas Administrative Boundaries"
+
+    build_district_boundaries_folder(
+        kml.document, _sorted_by(districts, fields["name"]), config, style_resolver
+    )
+    build_county_boundaries_folder(kml.document, counties, config, style_resolver)
+    build_city_limits_folder(kml.document, city_limits, config, style_resolver)
     return kml
 
 

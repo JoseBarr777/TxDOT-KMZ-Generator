@@ -296,6 +296,12 @@ visibility_defaults:
   district_details_folder: false
   district_detail_folder: false
   county_folder: false
+  # Per-district browse-by-district KML (districts/<district>.kml) only. Its
+  # whole purpose is the county links it carries, so unlike master.kml's
+  # statewide District Details folder -- hidden so opening master.kml can't
+  # try to pull all 254 county KMZs at once -- this defaults to visible: a
+  # single district is ~10 counties. Applies to the folder and its links.
+  district_kml_counties_folder: true
   administrative_boundaries_folder: true   # wrapper; visible so County Boundary shows as before
   county_boundary_folder: true    # visible once its parent county folder is turned on
   city_limits_folder: false       # hidden by default, independently toggleable from its parent
