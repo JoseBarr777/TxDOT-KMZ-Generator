@@ -44,13 +44,40 @@ def route_style(style_config: RouteStyleConfig) -> simplekml.Style:
     return style
 
 
-def build_all_styles(config: Config) -> dict[str, simplekml.Style]:
-    """Build every configured style up front, keyed for reuse across placemarks."""
-    styles: dict[str, simplekml.Style] = {
-        "district_boundary": polygon_style(config.district_style),
-        "county_boundary": polygon_style(config.county_style),
-        "city_limits_boundary": polygon_style(config.city_limits_style),
-    }
-    for category, route_cfg in config.route_styles.items():
-        styles[f"route_{category}"] = route_style(route_cfg)
-    return styles
+class StyleResolver:
+    """Single point of lookup from a feature/category to its KML style.
+
+    Built once per run (styles are shared simplekml.Style instances so
+    placemarks reuse them rather than each inlining its own copy) and
+    threaded through the exporters in place of a raw dict, so call sites
+    ask for a style by logical name (`resolver.route("interstate")`)
+    instead of constructing dict keys themselves.
+
+    This is also the seam a later change adds highlight StyleMaps at:
+    `route()`/the boundary accessors can start returning StyleMap-backed
+    references without any exporter call site changing.
+    """
+
+    def __init__(self, config: Config) -> None:
+        self._district_boundary = polygon_style(config.district_style)
+        self._county_boundary = polygon_style(config.county_style)
+        self._city_limits_boundary = polygon_style(config.city_limits_style)
+        self._routes: dict[str, simplekml.Style] = {
+            category: route_style(route_cfg) for category, route_cfg in config.route_styles.items()
+        }
+
+    def district_boundary(self) -> simplekml.Style:
+        return self._district_boundary
+
+    def county_boundary(self) -> simplekml.Style:
+        return self._county_boundary
+
+    def city_limits_boundary(self) -> simplekml.Style:
+        return self._city_limits_boundary
+
+    def route(self, category: str) -> simplekml.Style:
+        """Style for one roadway category (interstate, county_road, grade_separated_connector, ...)."""
+        try:
+            return self._routes[category]
+        except KeyError:
+            raise KeyError(f"No style configured for route category {category!r}") from None

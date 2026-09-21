@@ -4,7 +4,7 @@ import geopandas as gpd
 from shapely.geometry import Polygon
 
 from txdot_overlay.export.kml_builder import build_master_kml
-from txdot_overlay.styling.styles import build_all_styles
+from txdot_overlay.styling.styles import StyleResolver
 
 KML_NS = "{http://www.opengis.net/kml/2.2}"
 
@@ -62,8 +62,8 @@ def _placemark_visibility(folder, name):
 
 
 def test_master_kml_default_visibility_matches_config(config):
-    styles = build_all_styles(config)
-    kml = build_master_kml(_districts_gdf(), _counties_gdf(), config, styles)
+    style_resolver = StyleResolver(config)
+    kml = build_master_kml(_districts_gdf(), _counties_gdf(), config, style_resolver)
     root = ET.fromstring(kml.kml())
 
     boundaries_folder = _folder(root, "District Boundaries")
@@ -89,8 +89,8 @@ def test_master_kml_default_visibility_matches_config(config):
 
 
 def test_master_kml_networklink_href_is_relative_and_matches_convention(config):
-    styles = build_all_styles(config)
-    kml = build_master_kml(_districts_gdf(), _counties_gdf(), config, styles)
+    style_resolver = StyleResolver(config)
+    kml = build_master_kml(_districts_gdf(), _counties_gdf(), config, style_resolver)
     root = ET.fromstring(kml.kml())
 
     href_el = next(root.iter(f"{KML_NS}href"))

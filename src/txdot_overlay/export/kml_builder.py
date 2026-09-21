@@ -54,6 +54,7 @@ from txdot_overlay.processing.classify import (
     OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER,
     PhysicalRoadType,
 )
+from txdot_overlay.styling.styles import StyleResolver
 from txdot_overlay.utils import slugify
 
 logger = get_logger(__name__)
@@ -101,7 +102,7 @@ def build_district_boundaries_folder(
     parent: Any,
     districts: gpd.GeoDataFrame,
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> simplekml.Folder:
     """Add the "District Boundaries" folder as a child of `parent` (e.g. kml.document)."""
     fields = config.sources["districts"].fields
@@ -121,7 +122,7 @@ def build_district_boundaries_folder(
             folder,
             name=str(name),
             geometry=_render_geometry(row.geometry, config.district_boundary_tolerance_degrees),
-            style=styles["district_boundary"],
+            style=style_resolver.district_boundary(),
             description=description,
             visibility=config.visibility_defaults["district_placemarks"],
         )
@@ -169,12 +170,12 @@ def build_master_kml(
     districts: gpd.GeoDataFrame,
     counties: gpd.GeoDataFrame,
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> simplekml.Kml:
     kml = simplekml.Kml()
     kml.document.name = "TxDOT Reference Overlay"
 
-    build_district_boundaries_folder(kml.document, districts, config, styles)
+    build_district_boundaries_folder(kml.document, districts, config, style_resolver)
     build_district_details_folder(kml.document, districts, counties, config)
     return kml
 
@@ -188,7 +189,7 @@ def add_county_detail_content(
     roadways: gpd.GeoDataFrame,
     city_limits: gpd.GeoDataFrame,
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> None:
     """Add the full county-detail folder tree directly under `parent_folder`.
 
@@ -208,7 +209,7 @@ def add_county_detail_content(
         boundary_folder,
         name=f"{county_name} County",
         geometry=_render_geometry(county_geometry, config.county_boundary_tolerance_degrees),
-        style=styles["county_boundary"],
+        style=style_resolver.county_boundary(),
         description=build_description_html(
             county_attrs, config.sources["counties"].description_fields
         ),
@@ -217,7 +218,7 @@ def add_county_detail_content(
 
     city_limits_folder = admin_folder.newfolder(name="City Limits")
     city_limits_folder.visibility = 1 if config.visibility_defaults["city_limits_folder"] else 0
-    _add_city_limits_placemarks(city_limits_folder, city_limits, config, styles)
+    _add_city_limits_placemarks(city_limits_folder, city_limits, config, style_resolver)
 
     road_fields = config.sources["roadways"].fields
     physical_type = roadways["physical_type"]
@@ -229,7 +230,9 @@ def add_county_detail_content(
 
     roadways_folder = parent_folder.newfolder(name="TxDOT Roadways")
     roadways_folder.visibility = 1 if config.visibility_defaults["roadways_folder"] else 0
-    _add_route_category_folders(roadways_folder, on_system_roadways, road_fields, config, styles)
+    _add_route_category_folders(
+        roadways_folder, on_system_roadways, road_fields, config, style_resolver
+    )
 
     if len(off_system_roadways):
         other_public_folder = parent_folder.newfolder(name="Other Public Roadways")
@@ -237,7 +240,7 @@ def add_county_detail_content(
             1 if config.visibility_defaults["other_public_roadways_folder"] else 0
         )
         _add_other_public_roadway_folders(
-            other_public_folder, off_system_roadways, road_fields, config, styles
+            other_public_folder, off_system_roadways, road_fields, config, style_resolver
         )
 
     if len(grade_separated_connectors):
@@ -253,7 +256,7 @@ def add_county_detail_content(
             grade_separated_folder,
             grade_separated_connectors,
             road_fields,
-            styles[f"route_{GRADE_SEPARATED_CONNECTOR_STYLE_KEY}"],
+            style_resolver.route(GRADE_SEPARATED_CONNECTOR_STYLE_KEY),
         )
 
 
@@ -261,7 +264,7 @@ def _add_city_limits_placemarks(
     container: Any,
     city_limits: gpd.GeoDataFrame,
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> None:
     city_fields = config.sources["city_limits"].fields
     for _, row in city_limits.iterrows():
@@ -274,7 +277,7 @@ def _add_city_limits_placemarks(
             container,
             name=title,
             geometry=_render_geometry(row.geometry, config.city_limits_boundary_tolerance_degrees),
-            style=styles["city_limits_boundary"],
+            style=style_resolver.city_limits_boundary(),
             description=description,
             visibility=True,
         )
@@ -285,7 +288,7 @@ def _add_route_category_folders(
     on_system_roadways: gpd.GeoDataFrame,
     road_fields: dict[str, str],
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> None:
     present_categories = set(on_system_roadways.get("route_category", []))
     for category in ROUTE_CATEGORY_ORDER:
@@ -296,7 +299,7 @@ def _add_route_category_folders(
         category_folder = roadways_folder.newfolder(name=label)
         category_folder.visibility = 1 if config.visibility_defaults["route_category_folder"] else 0
         _add_roadway_placemarks(
-            category_folder, category_rows, road_fields, styles[f"route_{category}"]
+            category_folder, category_rows, road_fields, style_resolver.route(category)
         )
 
 
@@ -305,7 +308,7 @@ def _add_other_public_roadway_folders(
     off_system_roadways: gpd.GeoDataFrame,
     road_fields: dict[str, str],
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> None:
     present_categories = set(off_system_roadways.get("other_public_roadway_category", []))
     for category in OTHER_PUBLIC_ROADWAY_CATEGORY_ORDER:
@@ -320,7 +323,7 @@ def _add_other_public_roadway_folders(
             1 if config.visibility_defaults["other_public_roadway_category_folder"] else 0
         )
         _add_roadway_placemarks(
-            category_folder, category_rows, road_fields, styles[f"route_{category}"]
+            category_folder, category_rows, road_fields, style_resolver.route(category)
         )
 
 
@@ -356,7 +359,7 @@ def build_single_file_kml(
     county_roadways: dict[str, gpd.GeoDataFrame],
     county_city_limits: dict[str, gpd.GeoDataFrame],
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> simplekml.Kml:
     """Build one self-contained KML with everything inlined (no NetworkLinks).
 
@@ -369,7 +372,7 @@ def build_single_file_kml(
     kml = simplekml.Kml()
     kml.document.name = "TxDOT Reference Overlay (Single File)"
 
-    build_district_boundaries_folder(kml.document, districts, config, styles)
+    build_district_boundaries_folder(kml.document, districts, config, style_resolver)
 
     details_folder = kml.document.newfolder(name="District Details")
     details_folder.visibility = 1 if config.visibility_defaults["district_details_folder"] else 0
@@ -398,7 +401,7 @@ def build_single_file_kml(
                 roadways=county_roadways[county_name],
                 city_limits=county_city_limits[county_name],
                 config=config,
-                styles=styles,
+                style_resolver=style_resolver,
             )
 
     return kml
@@ -413,7 +416,7 @@ def build_county_detail_kml(
     roadways: gpd.GeoDataFrame,
     city_limits: gpd.GeoDataFrame,
     config: Config,
-    styles: dict[str, simplekml.Style],
+    style_resolver: StyleResolver,
 ) -> simplekml.Kml:
     kml = simplekml.Kml()
     kml.document.name = f"{county_name} County"
@@ -426,7 +429,7 @@ def build_county_detail_kml(
         roadways=roadways,
         city_limits=city_limits,
         config=config,
-        styles=styles,
+        style_resolver=style_resolver,
     )
 
     physical_count = int((roadways["route_category"] != GRADE_SEPARATED_CONNECTOR_STYLE_KEY).sum())

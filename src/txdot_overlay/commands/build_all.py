@@ -28,7 +28,7 @@ from txdot_overlay.processing.geometry import (
     drop_invalid_geometries,
     simplify_geometry,
 )
-from txdot_overlay.styling.styles import build_all_styles
+from txdot_overlay.styling.styles import StyleResolver
 
 logger = get_logger(__name__)
 
@@ -45,9 +45,9 @@ def run(
     counties = load_counties(config, cache, force_refresh=force_refresh)
     city_limits = load_city_limits(config, cache, force_refresh=force_refresh)
 
-    styles = build_all_styles(config)
+    style_resolver = StyleResolver(config)
 
-    master_kml = build_master_kml(districts, counties, config, styles)
+    master_kml = build_master_kml(districts, counties, config, style_resolver)
     save_kml(master_kml, config.output_dir / config.master_kml_name)
 
     if districts_filter:
@@ -95,7 +95,7 @@ def run(
 
     if single_file:
         single_kml = build_single_file_kml(
-            districts, counties, county_roadways, county_city_limits, config, styles
+            districts, counties, county_roadways, county_city_limits, config, style_resolver
         )
         save_kmz(single_kml, config.output_dir / config.single_file_kmz_name)
 

@@ -7,7 +7,7 @@ from txdot_overlay.export.kml_builder import build_master_kml
 from txdot_overlay.export.kmz_writer import save_kml
 from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.pipeline import get_cache, load_counties, load_districts
-from txdot_overlay.styling.styles import build_all_styles
+from txdot_overlay.styling.styles import StyleResolver
 
 logger = get_logger(__name__)
 
@@ -19,8 +19,8 @@ def run(config: Config, *, force_refresh: bool = False) -> int:
 
     logger.info("Loaded %d district(s), %d count(y/ies)", len(districts), len(counties))
 
-    styles = build_all_styles(config)
-    kml = build_master_kml(districts, counties, config, styles)
+    style_resolver = StyleResolver(config)
+    kml = build_master_kml(districts, counties, config, style_resolver)
 
     master_path = config.output_dir / config.master_kml_name
     save_kml(kml, master_path)

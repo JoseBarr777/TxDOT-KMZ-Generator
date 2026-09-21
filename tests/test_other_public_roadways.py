@@ -15,7 +15,7 @@ from shapely.geometry import LineString, Polygon
 
 from txdot_overlay.export.kml_builder import build_county_detail_kml
 from txdot_overlay.processing.classify import classify_routes
-from txdot_overlay.styling.styles import build_all_styles
+from txdot_overlay.styling.styles import StyleResolver
 
 KML_NS = "{http://www.opengis.net/kml/2.2}"
 
@@ -54,7 +54,7 @@ def _sample_roadways(config):
 
 def _build_kml(config):
     roadways = _sample_roadways(config)
-    styles = build_all_styles(config)
+    style_resolver = StyleResolver(config)
     kml = build_county_detail_kml(
         district_name="Tyler",
         county_name="Smith",
@@ -63,7 +63,7 @@ def _build_kml(config):
         roadways=roadways,
         city_limits=_empty_city_limits(config),
         config=config,
-        styles=styles,
+        style_resolver=style_resolver,
     )
     return ET.fromstring(kml.kml())
 

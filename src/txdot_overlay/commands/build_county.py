@@ -24,7 +24,7 @@ from txdot_overlay.processing.geometry import (
     drop_invalid_geometries,
     simplify_geometry,
 )
-from txdot_overlay.styling.styles import build_all_styles
+from txdot_overlay.styling.styles import StyleResolver
 
 logger = get_logger(__name__)
 
@@ -105,7 +105,7 @@ def build_county(
             config.simplification_tolerance_degrees,
         )
 
-    styles = build_all_styles(config)
+    style_resolver = StyleResolver(config)
     kml = build_county_detail_kml(
         district_name=district_name,
         county_name=resolved_name,
@@ -114,7 +114,7 @@ def build_county(
         roadways=roadways,
         city_limits=county_city_limits,
         config=config,
-        styles=styles,
+        style_resolver=style_resolver,
     )
 
     relative_path = county_kmz_relative_path(district_name, resolved_name)

@@ -16,7 +16,7 @@ from txdot_overlay.export.descriptions import build_city_limits_description_html
 from txdot_overlay.export.kml_builder import build_county_detail_kml
 from txdot_overlay.export.titles import UNNAMED_CITY_LABEL, resolve_city_limits_title
 from txdot_overlay.processing.classify import classify_routes
-from txdot_overlay.styling.styles import build_all_styles
+from txdot_overlay.styling.styles import StyleResolver
 
 KML_NS = "{http://www.opengis.net/kml/2.2}"
 
@@ -61,7 +61,7 @@ def _sample_city_limits(config):
 def _build_kml(config):
     roadways = _sample_roadways(config)
     city_limits = _sample_city_limits(config)
-    styles = build_all_styles(config)
+    style_resolver = StyleResolver(config)
     kml = build_county_detail_kml(
         district_name="Tyler",
         county_name="Smith",
@@ -70,7 +70,7 @@ def _build_kml(config):
         roadways=roadways,
         city_limits=city_limits,
         config=config,
-        styles=styles,
+        style_resolver=style_resolver,
     )
     return ET.fromstring(kml.kml())
 
