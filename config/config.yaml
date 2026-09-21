@@ -210,8 +210,12 @@ styles:
     fill: true
     fill_color: "#FFC000"
     fill_opacity: 0.25      # lightest of the three -- district polygons are large and
-                               # sit underneath county/city fills, so low opacity keeps
-                               # triple-overlap areas from compounding into a heavy wash
+                             # sit underneath county/city fills. Note: district (on by
+                             # default statewide) + county (on by default once its parent
+                             # folder is open) already combine to ~50% opacity where they
+                             # overlap; adding city limits on top pushes a triple-overlap
+                             # area to ~75%. Kept ordered smallest-to-largest opacity by
+                             # design, but this is no longer a "low opacity" scheme.
   county_boundary:
     line_color: "#8A7FAE"    # muted violet
     line_width: 1.0
@@ -219,13 +223,13 @@ styles:
     fill_color: "#8A7FAE"
     fill_opacity: 0.33
   city_limits_boundary:
-    line_color: "#00A0A0"    # restrained teal, distinct from county gray/district amber
+    line_color: "#00A0A0"    # restrained teal, distinct from county violet/district amber
     line_width: 1.5
     fill: true
     fill_color: "#00A0A0"
     fill_opacity: 0.50       # most opaque of the three -- city polygons are smallest/most
-                               # local, so a bit more fill helps them read distinctly even
-                               # nested inside a filled county polygon
+                             # local, so more fill helps them read distinctly even nested
+                             # inside a filled county polygon
   routes:
     interstate:
       label: "Interstate"
