@@ -207,21 +207,25 @@ styles:
   district_boundary:
     line_color: "#FFC000"    # amber
     line_width: 3.0
-    fill: false
+    fill: true
     fill_color: "#FFC000"
-    fill_opacity: 0.0
+    fill_opacity: 0.25      # lightest of the three -- district polygons are large and
+                               # sit underneath county/city fills, so low opacity keeps
+                               # triple-overlap areas from compounding into a heavy wash
   county_boundary:
-    line_color: "#CCCCCC"    # light gray
+    line_color: "#8A7FAE"    # muted violet
     line_width: 1.0
-    fill: false
-    fill_color: "#CCCCCC"
-    fill_opacity: 0.0
+    fill: true
+    fill_color: "#8A7FAE"
+    fill_opacity: 0.33
   city_limits_boundary:
     line_color: "#00A0A0"    # restrained teal, distinct from county gray/district amber
     line_width: 1.5
     fill: true
     fill_color: "#00A0A0"
-    fill_opacity: 0.05        # transparent fill per requirement -- outline carries the shape
+    fill_opacity: 0.50       # most opaque of the three -- city polygons are smallest/most
+                               # local, so a bit more fill helps them read distinctly even
+                               # nested inside a filled county polygon
   routes:
     interstate:
       label: "Interstate"
@@ -233,7 +237,8 @@ styles:
       line_width: 2.5
     state_highway:
       label: "State Highway"
-      line_color: "#FFD700"  # gold
+      line_color: "#FF8C00"  # dark orange -- replaces the previous gold (#FFD700), which
+                              # read too close to county_road's goldenrod for a major route
       line_width: 2.0
     fm_rm:
       label: "FM / RM Road"
@@ -246,7 +251,7 @@ styles:
     county_local_other:
       label: "Other TxDOT Roadways"
       line_color: "#808080"  # muted gray -- visually subordinate to state routes
-      line_width: 1.0
+      line_width: 1.2
       # On-system safety-net only, as of the Other-Public-Roadways split
       # (see docs/SOURCE_AUDIT.md-adjacent hierarchy work): every currently
       # -known on-system HSYS code already resolves to one of the 5 named
@@ -258,23 +263,23 @@ styles:
     county_road:
       label: "County Roads"
       line_color: "#B8860B"  # dark goldenrod
-      line_width: 1.0
+      line_width: 1.2
     city_street:
       label: "City Streets"
       line_color: "#4682B4"  # steel blue
-      line_width: 1.0
+      line_width: 1.2
     regional_mobility_authority:
       label: "Regional Mobility Authority Roads"
       line_color: "#8B4513"  # saddle brown
-      line_width: 1.0
+      line_width: 1.2
     other_unclassified:
       label: "Other / Unclassified"
       line_color: "#A9A9A9"  # dark gray
-      line_width: 0.8
+      line_width: 1.0
     grade_separated_connector:
       label: "Grade-Separated Connectors"
       line_color: "#66CCCC"  # muted cyan -- deliberately faint; reference-only geometry
-      line_width: 0.6
+      line_width: 0.75
       # Google Earth Pro's LineStyle has no dash-pattern property in KML
       # 2.2 -- <gx:LineStyle> extensions and other tricks are unreliable
       # across versions, so we document this instead of shipping a style
