@@ -1,0 +1,308 @@
+name: Release (Staging)
+
+# v1: staging-only release. Builds the statewide artifact set, gates on a
+# complete manifest, and uploads to a versioned/immutable test prefix in R2.
+# Deliberately does NOT touch current.json or promote a production release --
+# that is a later phase once this staging path has been exercised manually.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: txdot-kmz-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify aws CLI is available
+        # Fail fast, before the statewide build, if the runner image ever
+        # loses/changes its bundled aws-cli -- upload/verify depend on it.
+        run: aws --version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build statewide artifacts
+        run: uv run python -m txdot_overlay build-all
+
+      - name: Validate output
+        run: uv run python -m txdot_overlay validate-output
+
+      - name: Generate manifest
+        # generate-manifest (commands/generate_manifest.py) intentionally
+        # returns 0 only when manifest.complete is True, else 1 -- by
+        # design, independent of validate-output. continue-on-error is
+        # required here, not optional: GitHub Actions skips all subsequent
+        # steps by default once one fails, so without it the completeness
+        # gate below -- the step meant to diagnose exactly this case, with
+        # its own printed summary -- would never run for an incomplete
+        # manifest, and the job would fail on this step's bare exit code
+        # instead of a clear, itemized reason.
+        continue-on-error: true
+        run: uv run python -m txdot_overlay generate-manifest
+
+      - name: Enforce release completeness gate
+        run: |
+          python3 <<'PY'
+          import json
+          import sys
+
+          MANIFEST_PATH = "data/output/manifest.json"
+
+          try:
+              with open(MANIFEST_PATH, encoding="utf-8") as fh:
+                  manifest = json.load(fh)
+          except FileNotFoundError:
+              print(f"::error::{MANIFEST_PATH} not found -- generate-manifest did not produce output")
+              sys.exit(1)
+
+          v = manifest["validation"]
+          status = v["status"]
+          counties_included = v["counties_included"]
+          counties_expected = v["counties_expected"]
+          districts_included = v["districts_included"]
+          districts_expected = v["districts_expected"]
+          required_missing = v["required_missing"]
+          required_invalid = v["required_invalid"]
+          artifact_count = len(manifest["artifacts"])
+
+          print("Manifest validation summary")
+          print(f"  status:             {status}")
+          print(f"  counties:           {counties_included}/{counties_expected}")
+          print(f"  districts:          {districts_included}/{districts_expected}")
+          print(f"  required_missing:   {required_missing}")
+          print(f"  required_invalid:   {required_invalid}")
+          print(f"  artifact_count:     {artifact_count}")
+
+          failures = []
+          if status != "complete":
+              failures.append(f"validation.status is '{status}', expected 'complete'")
+          if districts_expected != 25 or districts_included != 25:
+              failures.append(f"districts {districts_included}/{districts_expected}, expected 25/25")
+          if counties_expected != 254 or counties_included != 254:
+              failures.append(f"counties {counties_included}/{counties_expected}, expected 254/254")
+          if required_missing != 0:
+              failures.append(f"{required_missing} required artifact(s) missing")
+          if required_invalid != 0:
+              failures.append(f"{required_invalid} required artifact(s) invalid")
+
+          if failures:
+              for reason in failures:
+                  print(f"::error::Release gate failed: {reason}")
+              sys.exit(1)
+
+          print("Release gate passed: complete statewide release (25/25 districts, 254/254 counties)")
+          PY
+
+      - name: Compute release ID
+        id: release
+        run: |
+          timestamp="$(date -u +'%Y-%m-%dT%H%MZ')"
+          short_sha="$(git rev-parse --short HEAD)"
+          release_id="${timestamp}-${short_sha}"
+          echo "Release ID: ${release_id}"
+          echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release to R2 (staging)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          dest="s3://${CF_R2_BUCKET}/releases/test-${RELEASE_ID}/"
+
+          echo "Bucket: ${CF_R2_BUCKET}"
+          echo "Upload prefix: releases/test-${RELEASE_ID}/"
+
+          # aws s3 sync infers .json correctly but does not know .kml/.kmz,
+          # so those two extensions get an explicit --content-type pass.
+          # The three passes below partition data/output/ by extension --
+          # *.kml, *.kmz, then everything else excluding both -- so each
+          # file is touched by exactly one pass. The final (catch-all) pass
+          # explicitly excludes *.kml and *.kmz and therefore can never
+          # re-sync and overwrite the content-type/cache-control already
+          # set on those files by the first two passes.
+          # Cache-Control is long/immutable on all three passes since this
+          # prefix is versioned and never overwritten in place.
+          aws s3 sync data/output/ "${dest}" \
+            --endpoint-url "${endpoint}" \
+            --exclude "*" --include "*.kml" \
+            --content-type "application/vnd.google-earth.kml+xml" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+
+          aws s3 sync data/output/ "${dest}" \
+            --endpoint-url "${endpoint}" \
+            --exclude "*" --include "*.kmz" \
+            --content-type "application/vnd.google-earth.kmz" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+
+          aws s3 sync data/output/ "${dest}" \
+            --endpoint-url "${endpoint}" \
+            --exclude "*.kml" --exclude "*.kmz" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+
+          echo "Upload complete."
+
+      - name: Verify staged release
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          python3 <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          bucket = os.environ["CF_R2_BUCKET"]
+          release_id = os.environ["RELEASE_ID"]
+          account_id = os.environ["CF_ACCOUNT_ID"]
+          endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+          prefix = f"releases/test-{release_id}/"
+
+          def run_aws(args):
+              result = subprocess.run(
+                  ["aws", *args, "--endpoint-url", endpoint],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+              return result.stdout
+
+          with open("data/output/manifest.json", encoding="utf-8") as fh:
+              manifest = json.load(fh)
+
+          local_manifest_sha256 = hashlib.sha256(
+              Path("data/output/manifest.json").read_bytes()
+          ).hexdigest()
+          local_file_count = sum(1 for p in Path("data/output").rglob("*") if p.is_file())
+          expected_remote_count = len(manifest["artifacts"]) + 1  # +1 for manifest.json itself
+
+          print("Verification")
+          print(f"  release id:          {release_id}")
+          print(f"  bucket:              {bucket}")
+          print(f"  prefix:              {prefix}")
+          print(f"  local file count:    {local_file_count}")
+          print(f"  manifest artifacts:  {len(manifest['artifacts'])}")
+
+          failures = []
+
+          # 1 & 2: remote object count vs. manifest artifact count / local file count
+          listing_raw = run_aws(
+              ["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", prefix, "--output", "json"]
+          )
+          listing = json.loads(listing_raw) if listing_raw.strip() else {}
+          if listing.get("IsTruncated"):
+              print("::error::Object listing was truncated (>1000 objects); this check does not paginate")
+              sys.exit(1)
+
+          contents = listing.get("Contents", [])
+          remote_count = len(contents)
+          remote_sizes = {obj["Key"][len(prefix):]: obj["Size"] for obj in contents}
+          print(f"  remote object count: {remote_count}")
+
+          if remote_count != local_file_count:
+              failures.append(f"remote object count {remote_count} != local file count {local_file_count}")
+          if remote_count != expected_remote_count:
+              failures.append(
+                  f"remote object count {remote_count} != expected {expected_remote_count} "
+                  "(manifest artifacts + manifest.json)"
+              )
+
+          # 3: per-artifact size comparison against manifest size_bytes
+          size_mismatches = []
+          for artifact in manifest["artifacts"]:
+              path = artifact["path"]
+              expected_size = artifact["size_bytes"]
+              remote_size = remote_sizes.get(path)
+              if remote_size is None:
+                  size_mismatches.append(f"{path}: missing from remote listing")
+              elif remote_size != expected_size:
+                  size_mismatches.append(f"{path}: remote size {remote_size} != manifest size {expected_size}")
+          if "manifest.json" not in remote_sizes:
+              size_mismatches.append("manifest.json: missing from remote listing")
+
+          print(f"  size mismatches:     {len(size_mismatches)}")
+          failures.extend(size_mismatches[:10])
+          if len(size_mismatches) > 10:
+              failures.append(f"...and {len(size_mismatches) - 10} more size mismatches")
+
+          # 4: re-download and hash manifest.json, master.kml, one representative county KMZ
+          county_artifacts = [a for a in manifest["artifacts"] if a["type"] == "county_kmz"]
+          if not county_artifacts:
+              print("::error::No county_kmz artifacts found in manifest")
+              sys.exit(1)
+          representative_county = county_artifacts[0]
+
+          targets = {
+              "manifest.json": local_manifest_sha256,
+              "master.kml": None,
+              representative_county["path"]: representative_county["sha256"],
+          }
+
+          with tempfile.TemporaryDirectory() as tmpdir:
+              for remote_path, expected_hash in targets.items():
+                  local_path = Path("data/output") / remote_path
+                  if expected_hash is None:
+                      expected_hash = hashlib.sha256(local_path.read_bytes()).hexdigest()
+
+                  dest_path = Path(tmpdir) / Path(remote_path).name
+                  run_aws(["s3", "cp", f"s3://{bucket}/{prefix}{remote_path}", str(dest_path)])
+                  downloaded_hash = hashlib.sha256(dest_path.read_bytes()).hexdigest()
+
+                  ok = downloaded_hash == expected_hash
+                  print(f"  hash check {remote_path}: {'OK' if ok else 'MISMATCH'}")
+                  if not ok:
+                      failures.append(
+                          f"{remote_path}: sha256 mismatch (local {expected_hash}, remote {downloaded_hash})"
+                      )
+
+          # 5: content-type checks for one .kml, one .kmz, and manifest.json
+          content_type_checks = {
+              "master.kml": "application/vnd.google-earth.kml+xml",
+              representative_county["path"]: "application/vnd.google-earth.kmz",
+              "manifest.json": "application/json",
+          }
+          for remote_path, expected_ct in content_type_checks.items():
+              head_raw = run_aws(
+                  ["s3api", "head-object", "--bucket", bucket, "--key", f"{prefix}{remote_path}", "--output", "json"]
+              )
+              actual_ct = json.loads(head_raw).get("ContentType")
+              print(f"  content-type {remote_path}: {actual_ct}")
+              if actual_ct != expected_ct:
+                  failures.append(f"{remote_path}: content-type '{actual_ct}' != expected '{expected_ct}'")
+
+          if failures:
+              for reason in failures:
+                  print(f"::error::Verification failed: {reason}")
+              sys.exit(1)
+
+          print("Verification passed: staged release is complete and consistent.")
+          PY
