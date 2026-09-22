@@ -26,6 +26,52 @@ jobs:
         # loses/changes its bundled aws-cli -- upload/verify depend on it.
         run: aws --version
 
+      - name: R2 preflight (bucket name + access)
+        # Fail fast, before the statewide build, on a misconfigured
+        # CF_R2_BUCKET or credentials that can't reach it -- catching this
+        # now instead of after ~254 counties are built saves the whole
+        # build's runtime on a config mistake.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${CF_R2_BUCKET}" =~ ^[[:space:]] ]] || [[ "${CF_R2_BUCKET}" =~ [[:space:]]$ ]]; then
+            echo "::error::CF_R2_BUCKET has leading or trailing whitespace"
+            exit 1
+          fi
+
+          # S3 bucket-name shape: 3-63 chars, lowercase letters/digits/dots/
+          # hyphens, must start and end with a letter or digit.
+          if ! [[ "${CF_R2_BUCKET}" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
+            echo "::error::CF_R2_BUCKET '${CF_R2_BUCKET}' does not match S3 bucket-name shape (3-63 chars, lowercase letters/digits/dots/hyphens, must start and end with a letter or digit)"
+            exit 1
+          fi
+
+          if [[ "${CF_R2_BUCKET}" == *".."* ]]; then
+            echo "::error::CF_R2_BUCKET '${CF_R2_BUCKET}' contains consecutive periods, which S3 bucket names disallow"
+            exit 1
+          fi
+
+          if [[ "${CF_R2_BUCKET}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "::error::CF_R2_BUCKET '${CF_R2_BUCKET}' is formatted like an IP address, which S3 bucket names disallow"
+            exit 1
+          fi
+
+          echo "Bucket name shape OK: ${CF_R2_BUCKET}"
+
+          endpoint="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          if ! aws s3api head-bucket --bucket "${CF_R2_BUCKET}" --endpoint-url "${endpoint}"; then
+            echo "::error::head-bucket failed -- configured credentials cannot access bucket '${CF_R2_BUCKET}'"
+            exit 1
+          fi
+
+          echo "R2 preflight passed: bucket is reachable with the configured credentials."
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
         with:
