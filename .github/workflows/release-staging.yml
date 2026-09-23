@@ -152,6 +152,101 @@ jobs:
           print("Release gate passed: complete statewide release (25/25 districts, 254/254 counties)")
           PY
 
+      - name: Package release tree from manifest
+        # THE release invariant: what ships to R2 is defined by manifest.json,
+        # never by whatever happens to sit in data/output/. This step copies
+        # manifest.json plus exactly the paths manifest["artifacts"] declares
+        # into a clean release-stage/ tree, and every later step (upload and
+        # verification) reads only from release-stage/. Anything undeclared --
+        # the checked-out data/output/.gitkeep that broke staging run #2,
+        # .DS_Store, editor temp files, debug dumps, a future artifact type
+        # the manifest builder does not yet advertise -- is structurally
+        # unable to reach R2, because it is never copied here in the first
+        # place. This is an allowlist, not an exclude list.
+        run: |
+          python3 <<'PY'
+          import json
+          import shutil
+          import sys
+          from pathlib import Path
+
+          SOURCE_DIR = Path("data/output")
+          STAGE_DIR = Path("release-stage")
+          MANIFEST_NAME = "manifest.json"
+
+          manifest_src = SOURCE_DIR / MANIFEST_NAME
+          try:
+              with manifest_src.open(encoding="utf-8") as fh:
+                  manifest = json.load(fh)
+          except FileNotFoundError:
+              print(f"::error::{manifest_src} not found -- nothing to package")
+              sys.exit(1)
+
+          declared = [artifact["path"] for artifact in manifest["artifacts"]]
+
+          # Reject a manifest that cannot describe a coherent release before
+          # copying anything: duplicates would silently collapse two artifacts
+          # into one staged file, and a non-relative/escaping path would write
+          # outside the staging tree.
+          failures = []
+          seen = set()
+          for rel in declared:
+              if rel in seen:
+                  failures.append(f"manifest declares duplicate path: {rel}")
+              seen.add(rel)
+              if Path(rel).is_absolute() or ".." in Path(rel).parts:
+                  failures.append(f"manifest declares a non-relative or escaping path: {rel}")
+          if MANIFEST_NAME in seen:
+              failures.append(f"manifest declares {MANIFEST_NAME} as an artifact; it is staged separately")
+
+          if failures:
+              for reason in failures:
+                  print(f"::error::Packaging failed: {reason}")
+              sys.exit(1)
+
+          # A stale tree from an earlier attempt must never leak into this release.
+          if STAGE_DIR.exists():
+              shutil.rmtree(STAGE_DIR)
+          STAGE_DIR.mkdir(parents=True)
+
+          staged = 0
+          missing = []
+          for rel in declared:
+              src = SOURCE_DIR / rel
+              if not src.is_file():
+                  missing.append(rel)
+                  continue
+              dst = STAGE_DIR / rel
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              staged += 1
+
+          if missing:
+              for rel in missing[:10]:
+                  print(f"::error::Packaging failed: manifest-declared artifact missing from {SOURCE_DIR}: {rel}")
+              if len(missing) > 10:
+                  print(f"::error::Packaging failed: ...and {len(missing) - 10} more missing artifact(s)")
+              sys.exit(1)
+
+          shutil.copy2(manifest_src, STAGE_DIR / MANIFEST_NAME)
+
+          total_staged = sum(1 for p in STAGE_DIR.rglob("*") if p.is_file())
+
+          print("Release packaging summary")
+          print(f"  manifest artifacts:  {len(declared)}")
+          print(f"  staged artifacts:    {staged}")
+          print(f"  total staged files:  {total_staged}")
+
+          if staged != len(declared) or total_staged != len(declared) + 1:
+              print(
+                  "::error::Packaging failed: staged tree does not match the manifest contract "
+                  f"(expected {len(declared)} artifacts + {MANIFEST_NAME} = {len(declared) + 1} files)"
+              )
+              sys.exit(1)
+
+          print(f"Packaged {STAGE_DIR}/: {MANIFEST_NAME} + {staged} manifest-declared artifact(s), nothing else.")
+          PY
+
       - name: Compute release ID
         id: release
         run: |
@@ -177,9 +272,14 @@ jobs:
           echo "Bucket: ${CF_R2_BUCKET}"
           echo "Upload prefix: releases/test-${RELEASE_ID}/"
 
+          # Source is release-stage/, never data/output/: only files the
+          # manifest declared were packaged there, so an undeclared file
+          # cannot be swept up by the catch-all pass the way data/output/
+          # .gitkeep was in staging run #2.
+          #
           # aws s3 sync infers .json correctly but does not know .kml/.kmz,
           # so those two extensions get an explicit --content-type pass.
-          # The three passes below partition data/output/ by extension --
+          # The three passes below partition release-stage/ by extension --
           # *.kml, *.kmz, then everything else excluding both -- so each
           # file is touched by exactly one pass. The final (catch-all) pass
           # explicitly excludes *.kml and *.kmz and therefore can never
@@ -187,21 +287,21 @@ jobs:
           # set on those files by the first two passes.
           # Cache-Control is long/immutable on all three passes since this
           # prefix is versioned and never overwritten in place.
-          aws s3 sync data/output/ "${dest}" \
+          aws s3 sync release-stage/ "${dest}" \
             --endpoint-url "${endpoint}" \
             --exclude "*" --include "*.kml" \
             --content-type "application/vnd.google-earth.kml+xml" \
             --cache-control "public, max-age=31536000, immutable" \
             --only-show-errors
 
-          aws s3 sync data/output/ "${dest}" \
+          aws s3 sync release-stage/ "${dest}" \
             --endpoint-url "${endpoint}" \
             --exclude "*" --include "*.kmz" \
             --content-type "application/vnd.google-earth.kmz" \
             --cache-control "public, max-age=31536000, immutable" \
             --only-show-errors
 
-          aws s3 sync data/output/ "${dest}" \
+          aws s3 sync release-stage/ "${dest}" \
             --endpoint-url "${endpoint}" \
             --exclude "*.kml" --exclude "*.kmz" \
             --cache-control "public, max-age=31536000, immutable" \
@@ -242,13 +342,19 @@ jobs:
               )
               return result.stdout
 
-          with open("data/output/manifest.json", encoding="utf-8") as fh:
+          # release-stage/ is the local source of truth here, not data/output/:
+          # it is exactly manifest.json + the manifest-declared artifacts, so
+          # "remote == local" now means "remote == the manifest contract"
+          # rather than "remote == whatever the build left on disk".
+          STAGE_DIR = Path("release-stage")
+
+          with (STAGE_DIR / "manifest.json").open(encoding="utf-8") as fh:
               manifest = json.load(fh)
 
           local_manifest_sha256 = hashlib.sha256(
-              Path("data/output/manifest.json").read_bytes()
+              (STAGE_DIR / "manifest.json").read_bytes()
           ).hexdigest()
-          local_file_count = sum(1 for p in Path("data/output").rglob("*") if p.is_file())
+          local_file_count = sum(1 for p in STAGE_DIR.rglob("*") if p.is_file())
           expected_remote_count = len(manifest["artifacts"]) + 1  # +1 for manifest.json itself
 
           print("Verification")
@@ -315,7 +421,7 @@ jobs:
 
           with tempfile.TemporaryDirectory() as tmpdir:
               for remote_path, expected_hash in targets.items():
-                  local_path = Path("data/output") / remote_path
+                  local_path = STAGE_DIR / remote_path
                   if expected_hash is None:
                       expected_hash = hashlib.sha256(local_path.read_bytes()).hexdigest()
 
