@@ -1,11 +1,14 @@
-name: Release (Promote) - dry run
+name: Release (Promote)
 
-# Validation-only dry run for production promotion. Given a release_id, this
-# workflow proves the release still exists, is complete, and is internally
-# consistent -- without writing current.json or touching any R2 object.
-# There is no PutObject/CopyObject/DeleteObject/sync anywhere in this file.
-# Real promotion (the current.json write) is a later phase once this dry
-# run has been exercised manually against the existing verified release.
+# Production promotion by pointer. Given a release_id, this workflow proves
+# the release still exists, is complete, and is internally consistent, then
+# -- only once every one of those checks has passed -- writes current.json
+# at the bucket root to point at it. The release artifacts under
+# releases/**/ are never rebuilt, renamed, copied, or moved by this
+# workflow; the only mutating R2 call anywhere in this file is the
+# PutObject of current.json itself (via `aws s3 cp`). There is no
+# CopyObject/DeleteObject/sync call anywhere in this file, and no release
+# prefix is ever written to.
 on:
   workflow_dispatch:
     inputs:
@@ -26,7 +29,7 @@ concurrency:
 permissions: {}
 
 jobs:
-  dry-run:
+  promote:
     runs-on: ubuntu-latest
     steps:
       - name: Validate release_id input
@@ -156,11 +159,13 @@ jobs:
 
           echo "resolved_prefix=${resolved_prefix}" >> "$GITHUB_OUTPUT"
 
-      - name: Validate release and print dry-run summary
-        # Read-only from here down: s3 cp (download), s3api list-objects-v2,
-        # s3api head-object. No put-object/copy-object/delete-object/sync
-        # call exists in this file, and current.json is only ever read,
-        # never written.
+      - name: Validate release
+        # Read-only: s3 cp (download), s3api list-objects-v2, s3api
+        # head-object. No put-object/copy-object/delete-object/sync call in
+        # this step. current.json is only ever read here, never written --
+        # the write happens in a later step, and only if every check below
+        # passes.
+        id: validate_release
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -272,12 +277,236 @@ jobs:
                   sys.exit(1)
 
               print()
-              print("DRY RUN ONLY")
               print(f"Current release: {current_release_id if current_release_id else 'none'}")
               print(f"Target release:  {release_id}")
               print(f"Resolved prefix: {prefix}")
               print(f"Manifest status: {v['status']}")
               print(f"Remote object count: {remote_count}")
               print("Promotion validation: PASSED")
-              print("No R2 objects were modified.")
+              print("No R2 objects have been modified yet -- proceeding to write current.json.")
+
+              # Passed as a plain string, empty when there is no current
+              # release; the next step treats an empty string as "null" for
+              # previous_release_id, since GITHUB_OUTPUT has no native
+              # concept of None.
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out_fh:
+                  out_fh.write(f"current_release_id={current_release_id or ''}\n")
           PY
+
+      - name: Construct and validate current.json locally
+        # Pure local file construction + validation -- no R2 call in this
+        # step at all. The upload happens only in the next step, and only
+        # once this one has confirmed the local file is well-formed.
+        id: build_current_json
+        env:
+          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
+          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
+          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
+          CURRENT_RELEASE_ID: ${{ steps.validate_release.outputs.current_release_id }}
+        run: |
+          python3 <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          release_id = os.environ["RELEASE_ID"]
+          git_sha_short = os.environ["GIT_SHA_SHORT"]
+          resolved_prefix = os.environ["RESOLVED_PREFIX"]
+          current_release_id = os.environ.get("CURRENT_RELEASE_ID", "")
+
+          # Empty string (GITHUB_OUTPUT's only way to pass "no value") means
+          # this is the first promotion ever -- current.json does not exist
+          # yet -- so previous_release_id must be JSON null, not "" or
+          # "none".
+          previous_release_id = current_release_id if current_release_id else None
+
+          promoted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          doc = {
+              "schema_version": 1,
+              "release_id": release_id,
+              "release_prefix": resolved_prefix,
+              "manifest_path": "manifest.json",
+              "git_sha_short": git_sha_short,
+              "promoted_at": promoted_at,
+              "previous_release_id": previous_release_id,
+          }
+
+          local_path = Path(os.environ["RUNNER_TEMP"]) / "current.json"
+          local_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+          # Re-read from disk (not from the `doc` dict in memory) so this
+          # validates exactly the bytes that are about to be uploaded.
+          with local_path.open(encoding="utf-8") as fh:
+              reloaded = json.load(fh)
+
+          failures = []
+          for field in (
+              "schema_version", "release_id", "release_prefix", "manifest_path",
+              "git_sha_short", "promoted_at", "previous_release_id",
+          ):
+              if field not in reloaded:
+                  failures.append(f"current.json is missing required field '{field}'")
+
+          if reloaded.get("schema_version") != 1:
+              failures.append(f"schema_version is {reloaded.get('schema_version')!r}, expected integer 1")
+          if reloaded.get("release_id") != release_id:
+              failures.append(f"release_id {reloaded.get('release_id')!r} != target {release_id!r}")
+          if reloaded.get("release_prefix") != resolved_prefix:
+              failures.append(f"release_prefix {reloaded.get('release_prefix')!r} != resolved prefix {resolved_prefix!r}")
+          if reloaded.get("manifest_path") != "manifest.json":
+              failures.append(f"manifest_path {reloaded.get('manifest_path')!r} != 'manifest.json'")
+          if reloaded.get("git_sha_short") != git_sha_short:
+              failures.append(f"git_sha_short {reloaded.get('git_sha_short')!r} != validated short SHA {git_sha_short!r}")
+          if not reloaded.get("promoted_at"):
+              failures.append("promoted_at is missing or empty")
+
+          prev = reloaded.get("previous_release_id")
+          if prev is not None and not isinstance(prev, str):
+              failures.append(f"previous_release_id must be a string or null, got {type(prev).__name__}")
+          elif prev != previous_release_id:
+              failures.append(f"previous_release_id {prev!r} != expected {previous_release_id!r}")
+
+          if failures:
+              for reason in failures:
+                  print(f"::error::current.json local validation failed: {reason}")
+              sys.exit(1)
+
+          local_sha256 = hashlib.sha256(local_path.read_bytes()).hexdigest()
+
+          print("Proposed current.json contents (not yet uploaded):")
+          print(json.dumps(reloaded, indent=2))
+          print(f"Local sha256: {local_sha256}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out_fh:
+              out_fh.write(f"local_sha256={local_sha256}\n")
+          PY
+
+      - name: Upload current.json to R2
+        # The only mutating R2 call in this entire workflow. It writes
+        # exactly one key, current.json, at the bucket root. It never
+        # touches anything under releases/**/.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          aws s3 cp "${RUNNER_TEMP}/current.json" "s3://${CF_R2_BUCKET}/current.json" \
+            --endpoint-url "${endpoint}" \
+            --content-type "application/json" \
+            --cache-control "no-cache, must-revalidate"
+
+          echo "Uploaded current.json to s3://${CF_R2_BUCKET}/current.json"
+
+      - name: Read-back verify current.json
+        # Downloads current.json back from R2 and checks it byte-for-byte
+        # (via sha256) and field-for-field against what was uploaded. This
+        # step is itself read-only against R2 -- it only ever issues s3 cp
+        # (download). If anything here fails, the workflow fails loudly and
+        # explicitly declines to attempt an automatic rollback.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
+          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
+          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
+          CURRENT_RELEASE_ID: ${{ steps.validate_release.outputs.current_release_id }}
+          LOCAL_SHA256: ${{ steps.build_current_json.outputs.local_sha256 }}
+        run: |
+          python3 <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          bucket = os.environ["CF_R2_BUCKET"]
+          account_id = os.environ["CF_ACCOUNT_ID"]
+          endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+          release_id = os.environ["RELEASE_ID"]
+          git_sha_short = os.environ["GIT_SHA_SHORT"]
+          resolved_prefix = os.environ["RESOLVED_PREFIX"]
+          current_release_id = os.environ.get("CURRENT_RELEASE_ID", "")
+          expected_previous = current_release_id if current_release_id else None
+          local_sha256 = os.environ["LOCAL_SHA256"]
+
+          readback_path = Path(os.environ["RUNNER_TEMP"]) / "current-readback.json"
+
+          result = subprocess.run(
+              ["aws", "s3", "cp", f"s3://{bucket}/current.json", str(readback_path), "--endpoint-url", endpoint],
+              capture_output=True,
+              text=True,
+          )
+          if result.returncode != 0:
+              print(result.stderr, file=sys.stderr)
+              print("::error::Read-back download of current.json failed after upload -- current.json may already have changed and requires manual inspection. No automatic rollback was attempted.")
+              sys.exit(1)
+
+          remote_bytes = readback_path.read_bytes()
+          remote_sha256 = hashlib.sha256(remote_bytes).hexdigest()
+
+          failures = []
+          if remote_sha256 != local_sha256:
+              failures.append(f"sha256 mismatch: uploaded {local_sha256}, downloaded {remote_sha256}")
+
+          try:
+              remote_doc = json.loads(remote_bytes)
+          except json.JSONDecodeError as exc:
+              print(f"::error::downloaded current.json is not valid JSON: {exc}")
+              print("::error::current.json may already have changed and requires manual inspection. No automatic rollback was attempted.")
+              sys.exit(1)
+
+          if remote_doc.get("schema_version") != 1:
+              failures.append(f"schema_version {remote_doc.get('schema_version')!r} != 1")
+          if remote_doc.get("release_id") != release_id:
+              failures.append(f"release_id {remote_doc.get('release_id')!r} != {release_id!r}")
+          if remote_doc.get("release_prefix") != resolved_prefix:
+              failures.append(f"release_prefix {remote_doc.get('release_prefix')!r} != {resolved_prefix!r}")
+          if remote_doc.get("manifest_path") != "manifest.json":
+              failures.append(f"manifest_path {remote_doc.get('manifest_path')!r} != 'manifest.json'")
+          if remote_doc.get("git_sha_short") != git_sha_short:
+              failures.append(f"git_sha_short {remote_doc.get('git_sha_short')!r} != {git_sha_short!r}")
+          if remote_doc.get("previous_release_id") != expected_previous:
+              failures.append(f"previous_release_id {remote_doc.get('previous_release_id')!r} != {expected_previous!r}")
+          if not remote_doc.get("promoted_at"):
+              failures.append("promoted_at missing or empty in downloaded current.json")
+
+          if failures:
+              for reason in failures:
+                  print(f"::error::Read-back verification failed: {reason}")
+              print("::error::current.json may already have changed and requires manual inspection. No automatic rollback was attempted.")
+              sys.exit(1)
+
+          print("Read-back verification passed: uploaded current.json matches the validated content byte-for-byte.")
+          PY
+
+      - name: Print promotion summary
+        env:
+          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
+          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
+          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
+          CURRENT_RELEASE_ID: ${{ steps.validate_release.outputs.current_release_id }}
+        run: |
+          set -euo pipefail
+          previous="${CURRENT_RELEASE_ID:-none}"
+
+          echo "Promotion PASSED"
+          echo ""
+          echo "Previous release: ${previous}"
+          echo "Current release: ${RELEASE_ID}"
+          echo "Release prefix: ${RESOLVED_PREFIX}"
+          echo "Manifest: manifest.json"
+          echo "git_sha_short: ${GIT_SHA_SHORT}"
+          echo "current.json verified: YES"
