@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify aws CLI is available
         # Fail fast, before the statewide build, if the runner image ever
@@ -73,7 +73,7 @@ jobs:
           echo "R2 preflight passed: bucket is reachable with the configured credentials."
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
