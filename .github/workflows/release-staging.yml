@@ -1,9 +1,12 @@
 name: Release (Staging)
 
 # v1: staging-only release. Builds the statewide artifact set, gates on a
-# complete manifest, and uploads to a versioned/immutable test prefix in R2.
+# complete manifest, and uploads to a versioned/immutable release prefix in
+# R2. Deployment state (whether a release is live) belongs in current.json,
+# not in this prefix name, so the prefix names artifact identity only.
 # Deliberately does NOT touch current.json or promote a production release --
-# that is a later phase once this staging path has been exercised manually.
+# that is a later phase (see release-promote.yml) once this staging path has
+# been exercised manually.
 on:
   workflow_dispatch:
 
@@ -267,10 +270,10 @@ jobs:
         run: |
           set -euo pipefail
           endpoint="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          dest="s3://${CF_R2_BUCKET}/releases/test-${RELEASE_ID}/"
+          dest="s3://${CF_R2_BUCKET}/releases/${RELEASE_ID}/"
 
           echo "Bucket: ${CF_R2_BUCKET}"
-          echo "Upload prefix: releases/test-${RELEASE_ID}/"
+          echo "Upload prefix: releases/${RELEASE_ID}/"
 
           # Source is release-stage/, never data/output/: only files the
           # manifest declared were packaged there, so an undeclared file
@@ -331,7 +334,7 @@ jobs:
           release_id = os.environ["RELEASE_ID"]
           account_id = os.environ["CF_ACCOUNT_ID"]
           endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
-          prefix = f"releases/test-{release_id}/"
+          prefix = f"releases/{release_id}/"
 
           def run_aws(args):
               result = subprocess.run(
