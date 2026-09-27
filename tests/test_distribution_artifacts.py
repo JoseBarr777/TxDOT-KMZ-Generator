@@ -17,15 +17,17 @@ from shapely.geometry import Polygon
 
 from txdot_overlay.commands.build_distribution import build_distribution_artifacts
 from txdot_overlay.export.kml_builder import (
-    ADMIN_BOUNDARIES_KMZ,
-    CITY_BOUNDARIES_KMZ,
-    COUNTY_BOUNDARIES_KMZ,
-    DISTRICT_BOUNDARIES_KMZ,
     build_admin_boundaries_kml,
     build_city_boundaries_kml,
     build_county_boundaries_kml,
     build_district_boundaries_kml,
     build_district_kml,
+)
+from txdot_overlay.export.layout import (
+    ADMIN_BOUNDARIES_KMZ,
+    CITY_BOUNDARIES_KMZ,
+    COUNTY_BOUNDARIES_KMZ,
+    DISTRICT_BOUNDARIES_KMZ,
     district_kml_relative_path,
 )
 from txdot_overlay.styling.colors import hex_to_kml_color

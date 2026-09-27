@@ -55,7 +55,6 @@ None of the administrative-only documents carry roadway geometry.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
@@ -68,6 +67,7 @@ from txdot_overlay.export.descriptions import (
     build_roadway_description_html,
 )
 from txdot_overlay.export.geometry_adapter import add_line_placemark, add_polygon_placemark
+from txdot_overlay.export.layout import county_kmz_relative_path, district_kml_relative_path
 from txdot_overlay.export.titles import resolve_city_limits_title, resolve_title
 from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.processing.classify import (
@@ -76,7 +76,6 @@ from txdot_overlay.processing.classify import (
     PhysicalRoadType,
 )
 from txdot_overlay.styling.styles import StyleResolver
-from txdot_overlay.utils import slugify
 
 logger = get_logger(__name__)
 
@@ -114,36 +113,9 @@ ROUTE_CATEGORY_ORDER = [
 ]
 
 
-def county_kmz_relative_path(district_name: str, county_name: str) -> Path:
-    """The path (relative to the output directory) a county's detail KMZ lives at."""
-    return Path("districts") / slugify(district_name) / f"{slugify(county_name)}.kmz"
-
-
-def district_kml_relative_path(district_name: str) -> Path:
-    """The path (relative to the output directory) a district's NetworkLink KML lives at.
-
-    Deliberately a sibling of the district's own county directory
-    (districts/tyler.kml next to districts/tyler/), so its NetworkLink hrefs
-    are short relative paths ("tyler/smith.kmz") that keep resolving when the
-    whole output tree is moved, zipped, or served from an object store.
-    """
-    return Path("districts") / f"{slugify(district_name)}.kml"
-
-
 def _sorted_by(gdf: gpd.GeoDataFrame, *fields: str) -> gpd.GeoDataFrame:
     """Stable, source-order-independent ordering for deterministic output."""
     return gdf.sort_values(list(fields), kind="stable")
-
-
-# Administrative-only artifacts ship as KMZ: these are statewide polygon
-# collections whose plain-KML form is megabytes of coordinate text and
-# compresses ~3x (measured: the combined document is ~15MB of KML in a
-# ~4.9MB KMZ). Paths live here, next to the other artifact path
-# conventions, so both the builder command and the manifest agree on them.
-DISTRICT_BOUNDARIES_KMZ = Path("boundaries") / "district_boundaries.kmz"
-COUNTY_BOUNDARIES_KMZ = Path("boundaries") / "county_boundaries.kmz"
-CITY_BOUNDARIES_KMZ = Path("boundaries") / "city_boundaries.kmz"
-ADMIN_BOUNDARIES_KMZ = Path("boundaries") / "administrative_boundaries.kmz"
 
 
 def build_district_boundaries_folder(

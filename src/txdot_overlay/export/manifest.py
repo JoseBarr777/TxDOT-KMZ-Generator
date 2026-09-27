@@ -46,7 +46,7 @@ import geopandas as gpd
 
 from txdot_overlay import __version__
 from txdot_overlay.config import Config
-from txdot_overlay.export.kml_builder import (
+from txdot_overlay.export.layout import (
     ADMIN_BOUNDARIES_KMZ,
     CITY_BOUNDARIES_KMZ,
     COUNTY_BOUNDARIES_KMZ,

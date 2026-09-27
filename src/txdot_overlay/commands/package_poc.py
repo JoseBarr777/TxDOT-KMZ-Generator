@@ -17,7 +17,7 @@ from pathlib import Path
 
 from txdot_overlay.commands import build_boundaries, build_district
 from txdot_overlay.config import Config
-from txdot_overlay.export.kml_builder import county_kmz_relative_path
+from txdot_overlay.export.layout import county_kmz_relative_path
 from txdot_overlay.export.validate import validate_master_kml
 from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.pipeline import (
