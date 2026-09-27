@@ -17,6 +17,7 @@ from txdot_overlay.commands import (
     generate_manifest,
     inspect_sources,
     package_poc,
+    validate_offline_packages,
     validate_output,
 )
 from txdot_overlay.config import load_config
@@ -92,6 +93,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("validate-output", help="Sanity-check generated KML/KMZ output")
 
     subparsers.add_parser(
+        "validate-offline-packages",
+        help=(
+            "Independently verify District/Statewide offline ZIP packages against "
+            "the standalone county KMZs on disk (run after build-offline-packages)"
+        ),
+    )
+
+    subparsers.add_parser(
         "generate-manifest",
         help="Write manifest.json describing every valid, currently-built artifact",
     )
@@ -159,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         return build_offline_packages.run(config, force_refresh=args.force_refresh)
     if args.command == "validate-output":
         return validate_output.run(config)
+    if args.command == "validate-offline-packages":
+        return validate_offline_packages.run(config, force_refresh=args.force_refresh)
     if args.command == "generate-manifest":
         return generate_manifest.run(config, force_refresh=args.force_refresh)
     if args.command == "audit-data":

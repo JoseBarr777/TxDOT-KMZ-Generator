@@ -78,12 +78,17 @@ class OfflinePackageResult:
         return [d for d in self.districts if not d.built]
 
 
-def _district_county_names(
+def district_county_names(
     counties: gpd.GeoDataFrame, county_fields: dict[str, str], district_name: str
 ) -> list[str]:
     """The expected counties for one district, in the same stable alphabetical
     order manifest.py/build_distribution.py already use -- so package
     membership order matches the rest of the project's artifact ordering.
+
+    Public (not prefixed `_`) because `export/offline_package_validate.py`
+    needs the exact same authoritative membership computation this builder
+    uses -- the validator must ask the same question the builder did, not a
+    parallel/reimplemented one.
     """
     district_counties = counties[
         counties[county_fields["district_name"]] == district_name
@@ -181,7 +186,7 @@ def build_offline_packages(
 
     for district_name in district_names:
         district_name = str(district_name)
-        county_names = _district_county_names(counties, county_fields, district_name)
+        county_names = district_county_names(counties, county_fields, district_name)
 
         result, entries = _build_district_package(config, district_name, county_names)
         district_results.append(result)
