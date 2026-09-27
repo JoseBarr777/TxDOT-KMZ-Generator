@@ -114,6 +114,12 @@ class ManifestArtifact:
     county: str | None = None
     county_fips: str | None = None
     district: str | None = None
+    # Stable TxDOT identity (DIST_NBR), never derived from `district`,
+    # a slug, or list position -- `district` stays the human-readable
+    # display name; this is the machine identifier the offline-package
+    # work (Phase 3) will key on. Always set alongside `district`, never
+    # independently of it.
+    district_number: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -126,6 +132,7 @@ class ManifestArtifact:
             payload["county_fips"] = self.county_fips
         if self.district is not None:
             payload["district"] = self.district
+            payload["district_number"] = self.district_number
         payload["size_bytes"] = self.size_bytes
         payload["sha256"] = self.sha256
         return payload
@@ -190,7 +197,7 @@ def _artifact_from_file(
     display_name: str,
     path: Path,
     output_dir: Path,
-    **extra: str,
+    **extra: str | int,
 ) -> ManifestArtifact:
     return ManifestArtifact(
         type=artifact_type,
@@ -222,7 +229,7 @@ class _Collector:
         relative_path: Path,
         validator: Callable[[Path], ValidationReport],
         required: bool,
-        **extra: str,
+        **extra: str | int,
     ) -> None:
         path = self.output_dir / relative_path
         posix_path = relative_path.as_posix()
@@ -292,6 +299,10 @@ def build_manifest(
 
     district_names = sorted(districts[district_fields["name"]].dropna().unique())
     for district_name in district_names:
+        # DIST_NBR, not the name/slug: the stable machine identity a
+        # district's own row carries, looked up the same way
+        # commands/build_distribution.py already resolves a district row.
+        district_row = districts[districts[district_fields["name"]] == district_name].iloc[0]
         collector.add(
             artifact_type=DISTRICT_KML_TYPE,
             display_name=f"{district_name} District",
@@ -299,6 +310,7 @@ def build_manifest(
             validator=validate_kml_document,
             required=True,
             district=str(district_name),
+            district_number=int(district_row[district_fields["number"]]),
         )
 
     for district_name in sorted(counties[county_fields["district_name"]].dropna().unique()):
@@ -316,6 +328,11 @@ def build_manifest(
                 county=str(county_name),
                 county_fips=str(county_row[county_fields["fips"]]),
                 district=str(district_name),
+                # Already present on each county's own row (see
+                # config/config.yaml's counties.fields.district_number) --
+                # no district lookup needed, and no risk of it drifting from
+                # the county's actual assigned district.
+                district_number=int(county_row[county_fields["district_number"]]),
             )
 
     for artifact_type, display_name, relative_path in _ADMIN_ARTIFACTS:

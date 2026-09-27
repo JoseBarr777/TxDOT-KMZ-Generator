@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 
 import geopandas as gpd
 import pytest
@@ -151,16 +152,47 @@ def test_schema_shape(complete):
         "county",
         "county_fips",
         "district",
+        "district_number",
         "size_bytes",
         "sha256",
     }
 
     district = next(a for a in payload["artifacts"] if a["type"] == DISTRICT_KML_TYPE)
-    assert set(district) == {"type", "display_name", "path", "district", "size_bytes", "sha256"}
+    assert set(district) == {
+        "type",
+        "display_name",
+        "path",
+        "district",
+        "district_number",
+        "size_bytes",
+        "sha256",
+    }
 
-    # Statewide administrative artifacts carry no county/district fields.
+    # Statewide administrative artifacts carry no county/district fields --
+    # in particular, no fabricated district_number.
     admin = next(a for a in payload["artifacts"] if a["type"] == ADMIN_BOUNDARIES_TYPE)
     assert set(admin) == {"type", "display_name", "path", "size_bytes", "sha256"}
+
+
+def test_manifest_is_json_serializable(complete):
+    """district_number is sourced from a geopandas/numpy column (DIST_NBR is
+    numpy.int64, not a plain int) -- json.dumps rejects numpy scalars, so this
+    guards against that leaking through unconverted.
+    """
+    cfg, districts, counties = complete
+    payload = build_manifest(cfg, districts, counties).to_dict()
+
+    serialized = json.dumps(payload)
+    reloaded = json.loads(serialized)
+    assert reloaded == payload
+
+    district_numbers = [
+        a["district_number"]
+        for a in payload["artifacts"]
+        if a["type"] in (DISTRICT_KML_TYPE, COUNTY_KMZ_TYPE)
+    ]
+    assert district_numbers
+    assert all(type(n) is int for n in district_numbers)
 
 
 def test_all_new_artifact_types_are_present(complete):
@@ -184,6 +216,7 @@ def test_district_metadata_and_paths(complete):
     district_artifacts = [a for a in artifacts if a.type == DISTRICT_KML_TYPE]
 
     assert [a.district for a in district_artifacts] == ["Alpha", "Beta"]
+    assert [a.district_number for a in district_artifacts] == [1, 2]
     assert [a.display_name for a in district_artifacts] == ["Alpha District", "Beta District"]
     assert [a.path for a in district_artifacts] == ["districts/alpha.kml", "districts/beta.kml"]
     # A district KML is not county-scoped.
@@ -208,8 +241,53 @@ def test_county_metadata_matches_source(complete):
 
     assert anderson.county_fips == "48001"
     assert anderson.district == "Alpha"
+    assert anderson.district_number == 1
     assert anderson.display_name == "Anderson County"
     assert anderson.path == "districts/alpha/anderson.kmz"
+
+
+def test_district_number_is_not_derived_from_name_slug_or_position(cfg):
+    """The default fixture's DIST_NBR values (Alpha=1, Beta=2) happen to match
+    alphabetical/iteration order, which would not catch a bug that derived
+    district_number from position instead of reading DIST_NBR. This uses
+    reversed, non-sequential numbers instead, so a position- or name-based
+    derivation would produce the wrong (1, 2) answer rather than the actual
+    (17, 4) one.
+    """
+    districts = gpd.GeoDataFrame(
+        {
+            "DIST_NM": ["Alpha", "Beta"],
+            "DIST_NBR": [17, 4],
+            "DIST_ABRVN": ["ALP", "BET"],
+            "TYPE": ["Rural", "Urban"],
+            "geometry": [DISTRICT_ALPHA, DISTRICT_BETA],
+        },
+        crs="EPSG:4326",
+    )
+    counties = _counties_gdf(
+        [
+            ("Zapata", "48505", 3, "Beta", 4),
+            ("Wood", "48499", 2, "Alpha", 17),
+            ("Anderson", "48001", 1, "Alpha", 17),
+        ]
+    )
+    _write_complete_distribution(cfg, districts, counties)
+
+    artifacts = build_manifest(cfg, districts, counties).artifacts
+
+    district_numbers = {
+        a.district: a.district_number for a in artifacts if a.type == DISTRICT_KML_TYPE
+    }
+    assert district_numbers == {"Alpha": 17, "Beta": 4}
+
+    county_numbers = {a.county: a.district_number for a in artifacts if a.type == COUNTY_KMZ_TYPE}
+    assert county_numbers == {"Anderson": 17, "Wood": 17, "Zapata": 4}
+
+    # Every county's district_number must match its own district's number,
+    # not merely a value that happens to be present.
+    for artifact in artifacts:
+        if artifact.type == COUNTY_KMZ_TYPE:
+            assert artifact.district_number == district_numbers[artifact.district]
 
 
 def test_artifact_ordering_follows_the_download_model(complete):
