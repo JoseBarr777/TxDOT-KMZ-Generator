@@ -13,6 +13,7 @@ from txdot_overlay.commands import (
     build_county,
     build_distribution,
     build_district,
+    build_offline_packages,
     generate_manifest,
     inspect_sources,
     package_poc,
@@ -78,6 +79,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "build-distribution",
         help="Build per-district NetworkLink KMLs and administrative-only boundary artifacts",
+    )
+
+    subparsers.add_parser(
+        "build-offline-packages",
+        help=(
+            "Package already-built county KMZs into District/Statewide offline ZIPs "
+            "(run after build-all)"
+        ),
     )
 
     subparsers.add_parser("validate-output", help="Sanity-check generated KML/KMZ output")
@@ -146,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "build-distribution":
         return build_distribution.run(config, force_refresh=args.force_refresh)
+    if args.command == "build-offline-packages":
+        return build_offline_packages.run(config, force_refresh=args.force_refresh)
     if args.command == "validate-output":
         return validate_output.run(config)
     if args.command == "generate-manifest":
