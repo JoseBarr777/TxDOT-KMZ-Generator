@@ -14,6 +14,7 @@ from txdot_overlay.commands.build_distribution import build_distribution_artifac
 from txdot_overlay.config import Config
 from txdot_overlay.export.kml_builder import build_master_kml, build_single_file_kml
 from txdot_overlay.export.kmz_writer import save_kml, save_kmz
+from txdot_overlay.export.offline_package import build_offline_packages
 from txdot_overlay.logging_setup import get_logger
 from txdot_overlay.pipeline import (
     get_cache,
@@ -34,18 +35,25 @@ from txdot_overlay.styling.styles import StyleResolver
 logger = get_logger(__name__)
 
 
-def run(
+def build_all_artifacts(
     config: Config,
+    districts: gpd.GeoDataFrame,
+    counties: gpd.GeoDataFrame,
+    city_limits: gpd.GeoDataFrame,
     *,
     districts_filter: list[str] | None = None,
     single_file: bool = False,
     force_refresh: bool = False,
 ) -> int:
-    cache = get_cache(config)
-    districts = load_districts(config, cache, force_refresh=force_refresh)
-    counties = load_counties(config, cache, force_refresh=force_refresh)
-    city_limits = load_city_limits(config, cache, force_refresh=force_refresh)
+    """Build master.kml, distribution artifacts, every (scoped) county KMZ,
+    and the District/Statewide bulk-download ZIPs, in that order.
 
+    Takes already-loaded districts/counties/city_limits so it's testable
+    without live GIS/network access -- the same convention
+    build_distribution_artifacts/build_manifest/build_offline_packages
+    already use. `run()` below is the thin CLI wrapper that loads them.
+    """
+    cache = get_cache(config)
     style_resolver = StyleResolver(config)
 
     master_kml = build_master_kml(districts, counties, config, style_resolver)
@@ -104,7 +112,59 @@ def run(
         )
         save_kmz(single_kml, config.output_dir / config.single_file_kmz_name)
 
+    # The County KMZ is the canonical distributable artifact; District and
+    # Statewide ZIPs are convenient bulk-download containers around those
+    # exact same files, never a separate "offline" data format (see
+    # export/offline_package.py's module docstring). Built last, so a
+    # package is only ever produced once every county KMZ it depends on has
+    # actually landed on disk this run -- build_offline_packages itself
+    # already withholds/removes a District's or the Statewide ZIP whenever
+    # its expected county KMZs aren't all present (e.g. a scoped
+    # --district build), so that incompleteness is reported here, not
+    # treated as a build-all failure: a scoped build legitimately not
+    # producing every District's bulk ZIP is the same "not an error, just
+    # not built yet" status build_distribution_artifacts already tolerates
+    # for district KMLs referencing not-yet-built counties.
+    package_result = build_offline_packages(config, districts, counties)
+    built_count = len(package_result.built_districts)
+    total_count = len(package_result.districts)
+    logger.info(
+        "Bulk ZIP packages: %d/%d district ZIP(s) built, statewide ZIP %s",
+        built_count,
+        total_count,
+        "built" if package_result.statewide_built else "skipped (incomplete)",
+    )
+    if package_result.skipped_districts:
+        logger.warning(
+            "Bulk ZIP packages: %d district(s) skipped (missing county KMZ(s)): %s",
+            len(package_result.skipped_districts),
+            ", ".join(d.district_name for d in package_result.skipped_districts),
+        )
+
     return exit_code
+
+
+def run(
+    config: Config,
+    *,
+    districts_filter: list[str] | None = None,
+    single_file: bool = False,
+    force_refresh: bool = False,
+) -> int:
+    cache = get_cache(config)
+    districts = load_districts(config, cache, force_refresh=force_refresh)
+    counties = load_counties(config, cache, force_refresh=force_refresh)
+    city_limits = load_city_limits(config, cache, force_refresh=force_refresh)
+
+    return build_all_artifacts(
+        config,
+        districts,
+        counties,
+        city_limits,
+        districts_filter=districts_filter,
+        single_file=single_file,
+        force_refresh=force_refresh,
+    )
 
 
 def _rebuild_processed_roadways(county_row, counties, city_limits, config, cache, force_refresh):
