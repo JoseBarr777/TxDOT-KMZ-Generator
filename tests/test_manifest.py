@@ -17,8 +17,10 @@ from txdot_overlay.export.layout import (
     CITY_BOUNDARIES_KMZ,
     COUNTY_BOUNDARIES_KMZ,
     DISTRICT_BOUNDARIES_KMZ,
+    STATEWIDE_OFFLINE_ZIP,
     county_kmz_relative_path,
     district_kml_relative_path,
+    district_offline_zip_relative_path,
 )
 from txdot_overlay.export.manifest import (
     ADMIN_BOUNDARIES_TYPE,
@@ -27,14 +29,17 @@ from txdot_overlay.export.manifest import (
     COUNTY_KMZ_TYPE,
     DISTRICT_BOUNDARIES_TYPE,
     DISTRICT_KML_TYPE,
+    DISTRICT_ZIP_TYPE,
     MASTER_KML_TYPE,
     SCHEMA_VERSION,
     SINGLE_FILE_KMZ_TYPE,
+    STATEWIDE_ZIP_TYPE,
     STATUS_COMPLETE,
     STATUS_FAILED,
     STATUS_PARTIAL,
     build_manifest,
 )
+from txdot_overlay.export.offline_package import build_offline_packages
 from txdot_overlay.styling.styles import StyleResolver
 
 DISTRICT_ALPHA = Polygon([(-96, 32), (-95, 32), (-95, 33), (-96, 33)])
@@ -108,6 +113,9 @@ def _write_complete_distribution(cfg, districts, counties):
     build_distribution_artifacts(cfg, districts, counties, _city_limits_gdf(), style_resolver)
     for _, row in counties.iterrows():
         _write_valid_kmz(cfg.output_dir / county_kmz_relative_path(row["DIST_NM"], row["CNTY_NM"]))
+    # Bulk-download ZIPs are built from the county KMZs just written above,
+    # via the real Step 6 builder -- not a hand-rolled fake zip.
+    build_offline_packages(cfg, districts, counties)
 
 
 @pytest.fixture
@@ -173,6 +181,26 @@ def test_schema_shape(complete):
     admin = next(a for a in payload["artifacts"] if a["type"] == ADMIN_BOUNDARIES_TYPE)
     assert set(admin) == {"type", "display_name", "path", "size_bytes", "sha256"}
 
+    district_zip = next(a for a in payload["artifacts"] if a["type"] == DISTRICT_ZIP_TYPE)
+    assert set(district_zip) == {
+        "type",
+        "display_name",
+        "path",
+        "district",
+        "district_number",
+        "size_bytes",
+        "sha256",
+    }
+
+    # The Statewide bulk ZIP is not scoped to any one district -- no
+    # fabricated district identity.
+    statewide_zip = next(a for a in payload["artifacts"] if a["type"] == STATEWIDE_ZIP_TYPE)
+    assert set(statewide_zip) == {"type", "display_name", "path", "size_bytes", "sha256"}
+
+
+def test_schema_version_is_2_1():
+    assert SCHEMA_VERSION == "2.1"
+
 
 def test_manifest_is_json_serializable(complete):
     """district_number is sourced from a geopandas/numpy column (DIST_NBR is
@@ -189,7 +217,7 @@ def test_manifest_is_json_serializable(complete):
     district_numbers = [
         a["district_number"]
         for a in payload["artifacts"]
-        if a["type"] in (DISTRICT_KML_TYPE, COUNTY_KMZ_TYPE)
+        if a["type"] in (DISTRICT_KML_TYPE, COUNTY_KMZ_TYPE, DISTRICT_ZIP_TYPE)
     ]
     assert district_numbers
     assert all(type(n) is int for n in district_numbers)
@@ -201,6 +229,8 @@ def test_all_new_artifact_types_are_present(complete):
 
     assert types.count(DISTRICT_KML_TYPE) == 2
     assert types.count(COUNTY_KMZ_TYPE) == 3
+    assert types.count(DISTRICT_ZIP_TYPE) == 2
+    assert types.count(STATEWIDE_ZIP_TYPE) == 1
     for admin_type in (
         DISTRICT_BOUNDARIES_TYPE,
         COUNTY_BOUNDARIES_TYPE,
@@ -221,6 +251,46 @@ def test_district_metadata_and_paths(complete):
     assert [a.path for a in district_artifacts] == ["districts/alpha.kml", "districts/beta.kml"]
     # A district KML is not county-scoped.
     assert all(a.county is None and a.county_fips is None for a in district_artifacts)
+
+
+def test_district_zip_metadata_and_paths(complete):
+    cfg, districts, counties = complete
+    artifacts = build_manifest(cfg, districts, counties).artifacts
+    zip_artifacts = [a for a in artifacts if a.type == DISTRICT_ZIP_TYPE]
+
+    assert [a.district for a in zip_artifacts] == ["Alpha", "Beta"]
+    assert [a.district_number for a in zip_artifacts] == [1, 2]
+    assert [a.path for a in zip_artifacts] == [
+        district_offline_zip_relative_path("Alpha").as_posix(),
+        district_offline_zip_relative_path("Beta").as_posix(),
+    ]
+    # A District bulk ZIP is not county-scoped.
+    assert all(a.county is None and a.county_fips is None for a in zip_artifacts)
+
+
+def test_statewide_zip_metadata_and_path(complete):
+    cfg, districts, counties = complete
+    artifacts = build_manifest(cfg, districts, counties).artifacts
+    statewide = next(a for a in artifacts if a.type == STATEWIDE_ZIP_TYPE)
+
+    assert statewide.path == STATEWIDE_OFFLINE_ZIP.as_posix()
+    assert statewide.display_name == "Texas TxDOT Overlay"
+    # No fabricated District identity on the Statewide bundle.
+    assert statewide.district is None
+    assert statewide.district_number is None
+    assert statewide.county is None
+    assert statewide.county_fips is None
+
+
+def test_district_zip_ordering_is_deterministic_regardless_of_source_row_order(cfg):
+    districts = _districts_gdf().iloc[::-1].reset_index(drop=True)  # Beta, Alpha
+    counties = _counties_gdf()
+    _write_complete_distribution(cfg, districts, counties)
+
+    artifacts = build_manifest(cfg, districts, counties).artifacts
+    district_zip_names = [a.district for a in artifacts if a.type == DISTRICT_ZIP_TYPE]
+
+    assert district_zip_names == ["Alpha", "Beta"]
 
 
 def test_admin_artifact_paths(complete):
@@ -301,6 +371,9 @@ def test_artifact_ordering_follows_the_download_model(complete):
         COUNTY_KMZ_TYPE,
         COUNTY_KMZ_TYPE,
         COUNTY_KMZ_TYPE,
+        DISTRICT_ZIP_TYPE,
+        DISTRICT_ZIP_TYPE,
+        STATEWIDE_ZIP_TYPE,
         DISTRICT_BOUNDARIES_TYPE,
         COUNTY_BOUNDARIES_TYPE,
         CITY_BOUNDARIES_TYPE,
@@ -380,6 +453,28 @@ def test_missing_district_kml_downgrades_release_to_partial(complete):
     assert [a.district for a in manifest.artifacts if a.type == DISTRICT_KML_TYPE] == ["Alpha"]
     assert manifest.skipped[0].type == DISTRICT_KML_TYPE
     assert manifest.skipped[0].required is True
+
+
+def test_missing_district_zip_downgrades_release_to_partial(complete):
+    cfg, districts, counties = complete
+    (cfg.output_dir / district_offline_zip_relative_path("Beta")).unlink()
+
+    manifest = build_manifest(cfg, districts, counties)
+
+    assert manifest.status == STATUS_PARTIAL
+    assert [a.district for a in manifest.artifacts if a.type == DISTRICT_ZIP_TYPE] == ["Alpha"]
+    assert any(s.type == DISTRICT_ZIP_TYPE for s in manifest.skipped)
+
+
+def test_missing_statewide_zip_downgrades_release_to_partial(complete):
+    cfg, districts, counties = complete
+    (cfg.output_dir / STATEWIDE_OFFLINE_ZIP).unlink()
+
+    manifest = build_manifest(cfg, districts, counties)
+
+    assert manifest.status == STATUS_PARTIAL
+    assert not any(a.type == STATEWIDE_ZIP_TYPE for a in manifest.artifacts)
+    assert any(s.type == STATEWIDE_ZIP_TYPE for s in manifest.skipped)
 
 
 def test_missing_admin_artifact_downgrades_release_to_partial(complete):

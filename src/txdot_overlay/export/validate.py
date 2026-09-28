@@ -195,6 +195,32 @@ def validate_kmz(kmz_path: Path) -> ValidationReport:
     return report
 
 
+def validate_zip_archive(zip_path: Path) -> ValidationReport:
+    """Generic ZIP-container checks: present, valid archive, non-empty.
+
+    For containers with no single expected KML/KMZ payload to parse --
+    currently the District/Statewide bulk-download ZIPs
+    (`export/offline_package.py`), whose members are already self-contained,
+    independently-canonical county KMZs. Opening every member and comparing
+    it against its source is a different, deeper responsibility (see
+    `export/offline_package_validate.py`'s `validate-offline-packages`), not
+    this cheap per-artifact check's job.
+    """
+    report = ValidationReport()
+    if not zip_path.exists():
+        report.add_error(f"ZIP not found: {zip_path}")
+        return report
+
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            if not zf.namelist():
+                report.add_error(f"{zip_path}: ZIP archive is empty")
+    except zipfile.BadZipFile as exc:
+        report.add_error(f"{zip_path}: not a valid ZIP archive: {exc}")
+
+    return report
+
+
 def validate_output(config: Config) -> ValidationReport:
     """Validate every KML/KMZ artifact that currently exists on disk.
 

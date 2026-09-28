@@ -27,10 +27,20 @@ one district" need different responses from a publisher:
               invalid. Something is actually broken.
 
 REQUIRED for a complete statewide release: master.kml, one district KML per
-TxDOT district, one county KMZ per Texas county, and all four
-administrative-boundary artifacts. OPTIONAL: the single-file KMZ, which is
-only produced by `build-all --single-file-kmz` and is explicitly not the
-primary distribution experience.
+TxDOT district, one county KMZ per Texas county, all four
+administrative-boundary artifacts, one District bulk-download ZIP per TxDOT
+district, and the Statewide bulk-download ZIP. OPTIONAL: the single-file
+KMZ, which is only produced by `build-all --single-file-kmz` and is
+explicitly not the primary distribution experience.
+
+The District/Statewide ZIPs are not a separate offline data format or
+subsystem -- they are convenience bulk-download containers built by
+`export/offline_package.py` around the exact same canonical county KMZ
+bytes county_kmz artifacts already reference. This manifest records them
+like any other release artifact (type/path/size/sha256, the sha256 of the
+ZIP file itself); verifying that their embedded county KMZs actually match
+their canonical sources is a separate, deeper responsibility -- see
+`export/offline_package_validate.py`'s `validate-offline-packages`.
 """
 
 from __future__ import annotations
@@ -51,26 +61,35 @@ from txdot_overlay.export.layout import (
     CITY_BOUNDARIES_KMZ,
     COUNTY_BOUNDARIES_KMZ,
     DISTRICT_BOUNDARIES_KMZ,
+    STATEWIDE_OFFLINE_ZIP,
     county_kmz_relative_path,
     district_kml_relative_path,
+    district_offline_zip_relative_path,
 )
 from txdot_overlay.export.validate import (
     ValidationReport,
     validate_kml_document,
     validate_kmz,
     validate_master_kml,
+    validate_zip_archive,
 )
 
 # 2.0: added district_kml and the four administrative boundary types, and
 # replaced validation.status's passed/failed pair with the three-state
 # complete/partial/failed completeness model described above.
-SCHEMA_VERSION = "2.0"
+# 2.1: added district_zip and statewide_zip -- the District/Statewide
+# bulk-download ZIP bundles (export/offline_package.py) -- as required
+# release artifacts. Additive only: no existing type, field, or artifact
+# path changed meaning; a consumer that ignores unknown types is unaffected.
+SCHEMA_VERSION = "2.1"
 GENERATOR_NAME = "txdot_overlay"
 STATE = "TX"
 
 MASTER_KML_TYPE = "master_kml"
 DISTRICT_KML_TYPE = "district_kml"
 COUNTY_KMZ_TYPE = "county_kmz"
+DISTRICT_ZIP_TYPE = "district_zip"
+STATEWIDE_ZIP_TYPE = "statewide_zip"
 DISTRICT_BOUNDARIES_TYPE = "district_boundaries_kmz"
 COUNTY_BOUNDARIES_TYPE = "county_boundaries_kmz"
 CITY_BOUNDARIES_TYPE = "city_boundaries_kmz"
@@ -282,8 +301,10 @@ def build_manifest(
     Ordering is fully determined by the source reference data, never by
     filesystem enumeration: districts alphabetically, counties
     alphabetically within their district (the same order
-    build_district_details_folder uses for master.kml), and the
-    administrative artifacts in a fixed declared order.
+    build_district_details_folder uses for master.kml), District bulk ZIPs
+    alphabetically (mirroring district_kml's order), the Statewide ZIP
+    singly after them, and the administrative artifacts in a fixed declared
+    order.
     """
     collector = _Collector(config.output_dir)
     district_fields = config.sources["districts"].fields
@@ -334,6 +355,30 @@ def build_manifest(
                 # the county's actual assigned district.
                 district_number=int(county_row[county_fields["district_number"]]),
             )
+
+    # Bulk-download ZIP bundles: same 25-district source list and row
+    # lookup as the district_kml loop above (recomputed rather than shared
+    # across loops, matching how build_distribution.py/manifest.py already
+    # each do their own district_row lookup elsewhere in this codebase).
+    for district_name in district_names:
+        district_row = districts[districts[district_fields["name"]] == district_name].iloc[0]
+        collector.add(
+            artifact_type=DISTRICT_ZIP_TYPE,
+            display_name=f"{district_name} District (Bulk ZIP)",
+            relative_path=district_offline_zip_relative_path(str(district_name)),
+            validator=validate_zip_archive,
+            required=True,
+            district=str(district_name),
+            district_number=int(district_row[district_fields["number"]]),
+        )
+
+    collector.add(
+        artifact_type=STATEWIDE_ZIP_TYPE,
+        display_name="Texas TxDOT Overlay",
+        relative_path=STATEWIDE_OFFLINE_ZIP,
+        validator=validate_zip_archive,
+        required=True,
+    )
 
     for artifact_type, display_name, relative_path in _ADMIN_ARTIFACTS:
         collector.add(
