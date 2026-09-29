@@ -1,8 +1,9 @@
 """Behavior of scripts/release/gate.py, the staging workflow's completeness gate.
 
-These pin the gate's pre-Step-11 behavior: it checks validation.status,
-25/25 districts, 254/254 counties, and zero required missing/invalid -- and
-nothing about district/statewide ZIPs.
+The gate checks the manifest's validation summary (status, 25/25 districts,
+254/254 counties, zero required missing/invalid) and, independently, counts
+the Phase 3 bulk-download artifacts in the inventory (exactly 25
+district_zip, exactly 1 statewide_zip).
 """
 
 import json
@@ -17,7 +18,7 @@ from release import gate
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _manifest(**validation_overrides):
+def _manifest(*, district_zips=25, statewide_zips=1, **validation_overrides):
     validation = {
         "status": "complete",
         "counties_included": 254,
@@ -28,7 +29,16 @@ def _manifest(**validation_overrides):
         "required_invalid": 0,
     }
     validation.update(validation_overrides)
-    return {"validation": validation, "artifacts": [{"path": "master.kml"}]}
+    artifacts = [{"type": "master_kml", "path": "master.kml"}]
+    artifacts += [
+        {"type": "district_zip", "path": f"offline/districts/d{i:02d}.zip"}
+        for i in range(district_zips)
+    ]
+    artifacts += [
+        {"type": "statewide_zip", "path": f"offline/statewide-{i}.zip"}
+        for i in range(statewide_zips)
+    ]
+    return {"validation": validation, "artifacts": artifacts}
 
 
 def _write(tmp_path, manifest):
@@ -44,10 +54,13 @@ def test_complete_manifest_passes(tmp_path, capsys):
     assert "  status:             complete" in out
     assert "  counties:           254/254" in out
     assert "  districts:          25/25" in out
-    assert "  artifact_count:     1" in out
+    assert "  district_zip:       25/25" in out
+    assert "  statewide_zip:      1/1" in out
+    assert "  artifact_count:     27" in out
     assert (
-        "Release gate passed: complete statewide release (25/25 districts, 254/254 counties)" in out
-    )
+        "Release gate passed: complete statewide release "
+        "(25/25 districts, 254/254 counties, 25 district ZIPs, 1 statewide ZIP)"
+    ) in out
     assert "::error::" not in out
 
 
@@ -82,6 +95,8 @@ def test_all_failures_reported_together(tmp_path, capsys):
         counties_included=0,
         required_missing=3,
         required_invalid=4,
+        district_zips=0,
+        statewide_zips=0,
     )
     assert gate.gate_failures(manifest) == [
         "validation.status is 'incomplete', expected 'complete'",
@@ -89,13 +104,61 @@ def test_all_failures_reported_together(tmp_path, capsys):
         "counties 0/254, expected 254/254",
         "3 required artifact(s) missing",
         "4 required artifact(s) invalid",
+        "expected 25 district_zip artifacts, found 0",
+        "expected 1 statewide_zip artifact, found 0",
     ]
 
 
-def test_zip_artifacts_are_not_part_of_the_gate_yet():
-    # Step 10 is extraction only: a complete manifest with no district/
-    # statewide ZIP artifacts still passes the gate.
-    assert gate.gate_failures(_manifest()) == []
+# --- Phase 3 bulk-download contract -----------------------------------------
+#
+# Every manifest below otherwise claims a complete release (status complete,
+# 25/25, 254/254, nothing required missing/invalid), so the ZIP counts are
+# the only thing that can fail it. That is also the defense-in-depth
+# scenario: the gate does not take the validation summary's word for it.
+
+
+@pytest.mark.parametrize(
+    ("district_zips", "statewide_zips", "reasons"),
+    [
+        (24, 1, ["expected 25 district_zip artifacts, found 24"]),
+        (26, 1, ["expected 25 district_zip artifacts, found 26"]),
+        (25, 0, ["expected 1 statewide_zip artifact, found 0"]),
+        (25, 2, ["expected 1 statewide_zip artifact, found 2"]),
+        (
+            24,
+            0,
+            [
+                "expected 25 district_zip artifacts, found 24",
+                "expected 1 statewide_zip artifact, found 0",
+            ],
+        ),
+    ],
+)
+def test_wrong_zip_counts_fail_despite_complete_summary(
+    tmp_path, capsys, district_zips, statewide_zips, reasons
+):
+    manifest = _manifest(district_zips=district_zips, statewide_zips=statewide_zips)
+    assert manifest["validation"]["status"] == "complete"
+    assert manifest["validation"]["required_missing"] == 0
+    assert manifest["validation"]["required_invalid"] == 0
+
+    path = _write(tmp_path, manifest)
+    assert gate.main(["--manifest", str(path)]) == 1
+    out = capsys.readouterr().out
+    assert [line for line in out.splitlines() if line.startswith("::error::")] == [
+        f"::error::Release gate failed: {reason}" for reason in reasons
+    ]
+    assert f"  district_zip:       {district_zips}/25" in out
+    assert f"  statewide_zip:      {statewide_zips}/1" in out
+    assert "Release gate passed" not in out
+
+
+def test_zip_counts_are_by_type_not_path():
+    # Other artifact types, including one that merely lives under offline/,
+    # do not count toward the ZIP contract.
+    manifest = _manifest(district_zips=24)
+    manifest["artifacts"].append({"type": "county_kmz", "path": "offline/districts/extra.zip"})
+    assert gate.gate_failures(manifest) == ["expected 25 district_zip artifacts, found 24"]
 
 
 def test_missing_manifest_fails(tmp_path, capsys):
