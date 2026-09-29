@@ -1,14 +1,21 @@
 name: Release (Promote)
 
 # Production promotion by pointer. Given a release_id, this workflow proves
-# the release still exists, is complete, and is internally consistent, then
-# -- only once every one of those checks has passed -- writes current.json
-# at the bucket root to point at it. The release artifacts under
-# releases/**/ are never rebuilt, renamed, copied, or moved by this
-# workflow; the only mutating R2 call anywhere in this file is the
-# PutObject of current.json itself (via `aws s3 cp`). There is no
-# CopyObject/DeleteObject/sync call anywhere in this file, and no release
-# prefix is ever written to.
+# the release is a verified, contract-compliant candidate, then -- only once
+# every check has passed -- writes current.json at the bucket root to point
+# at it. The checks live in scripts/release/promote_check.py:
+#   releases/<release_id>/manifest.json exists (current layout only; legacy
+#   releases/test-<release_id>/ is not promotable), passes the release gate
+#   (scripts/release/gate.py), verified/<release_id>.json exists, is a valid
+#   record for this release, and its manifest_sha256 matches the exact remote
+#   manifest bytes, and the prefix holds exactly artifacts + 1 objects.
+# Rollback is promoting an older release that still satisfies all of that.
+#
+# The release artifacts under releases/**/ are never rebuilt, renamed,
+# copied, or moved by this workflow; the only mutating R2 call anywhere in
+# this file is the PutObject of current.json itself (via `aws s3 cp`). There
+# is no CopyObject/DeleteObject/sync call anywhere in this file, and no
+# release prefix or verification record is ever written to.
 on:
   workflow_dispatch:
     inputs:
@@ -25,13 +32,17 @@ concurrency:
   group: txdot-kmz-promote
   cancel-in-progress: false
 
-# No checkout, no repo contents needed -- this workflow only talks to R2.
-permissions: {}
+# Read-only repository access, for the release tooling in scripts/release/.
+permissions:
+  contents: read
 
 jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Validate release_id input
         # Inputs are taken via env vars, never interpolated directly into
         # the script body via ${{ }}, because workflow_dispatch string
@@ -40,7 +51,8 @@ jobs:
         # also the path-traversal defense: release_id may only contain
         # digits/T/Z/hyphens/lowercase-hex, so it can never contain "/" or
         # "..", which is what makes it safe to concatenate into an S3 key
-        # later without any further sanitization.
+        # later without any further sanitization. (promote_check.py applies
+        # the same pattern again, from record_verification.py.)
         id: validate_inputs
         env:
           RELEASE_ID: ${{ inputs.release_id }}
@@ -63,16 +75,8 @@ jobs:
             exit 1
           fi
 
-          # The short SHA is only validated for shape here, never resolved
-          # against real git history (no checkout in this workflow) and
-          # never expanded into a full SHA -- current release IDs only ever
-          # carry the short form, so that is the only claim this workflow
-          # makes.
-          git_sha_short="${RELEASE_ID##*-}"
-
-          echo "release_id format OK. git_sha_short=${git_sha_short}"
+          echo "release_id format OK."
           echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
-          echo "git_sha_short=${git_sha_short}" >> "$GITHUB_OUTPUT"
 
       - name: Verify aws CLI is available
         run: aws --version
@@ -119,18 +123,13 @@ jobs:
 
           echo "R2 preflight passed: bucket is reachable with the configured credentials."
 
-      - name: Resolve release prefix
-        # release_id was already regex-validated above to contain only
-        # digits/T/Z/hyphens/lowercase-hex, so concatenating it into these
-        # two fixed key shapes cannot escape the releases/ namespace or
-        # reach an arbitrary object. Only these two exact prefixes are ever
-        # tried -- a raw prefix is never accepted from the caller.
-        #
-        # head-object (not list-objects-v2) is used here on purpose: it is
-        # a single cheap existence check on the one key that must exist for
-        # a release to be usable at all, and its 404 is the normal/expected
-        # outcome for whichever scheme does NOT apply, not an error.
-        id: resolve_prefix
+      - name: Check promotion candidate
+        # Read-only (head-object, s3 cp downloads, list-objects-v2). Every
+        # candidate rule lives in scripts/release/promote_check.py, which
+        # reuses gate.py and record_verification.py rather than restating
+        # them. current.json is only read here; it is written in a later
+        # step, and only if this one passed.
+        id: validate_release
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -140,158 +139,11 @@ jobs:
           RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
         run: |
           set -euo pipefail
-          endpoint="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
-
-          candidate_current="releases/${RELEASE_ID}/"
-          candidate_legacy="releases/test-${RELEASE_ID}/"
-
-          resolved_prefix=""
-          if aws s3api head-object --bucket "${CF_R2_BUCKET}" --key "${candidate_current}manifest.json" --endpoint-url "${endpoint}" >/dev/null 2>&1; then
-            resolved_prefix="${candidate_current}"
-            echo "Resolved release_id '${RELEASE_ID}' to current-scheme prefix: ${resolved_prefix}"
-          elif aws s3api head-object --bucket "${CF_R2_BUCKET}" --key "${candidate_legacy}manifest.json" --endpoint-url "${endpoint}" >/dev/null 2>&1; then
-            resolved_prefix="${candidate_legacy}"
-            echo "Resolved release_id '${RELEASE_ID}' to legacy-scheme prefix: ${resolved_prefix}"
-          else
-            echo "::error::No manifest.json found under '${candidate_current}' or '${candidate_legacy}' -- release_id '${RELEASE_ID}' does not exist under either naming scheme"
-            exit 1
-          fi
-
-          echo "resolved_prefix=${resolved_prefix}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate release
-        # Read-only: s3 cp (download), s3api list-objects-v2, s3api
-        # head-object. No put-object/copy-object/delete-object/sync call in
-        # this step. current.json is only ever read here, never written --
-        # the write happens in a later step, and only if every check below
-        # passes.
-        id: validate_release
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
-          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
-          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
-          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
-        run: |
-          python3 <<'PY'
-          import json
-          import os
-          import subprocess
-          import sys
-          import tempfile
-          from pathlib import Path
-
-          bucket = os.environ["CF_R2_BUCKET"]
-          account_id = os.environ["CF_ACCOUNT_ID"]
-          endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
-          release_id = os.environ["RELEASE_ID"]
-          git_sha_short = os.environ["GIT_SHA_SHORT"]
-          prefix = os.environ["RESOLVED_PREFIX"]
-
-          def run_aws(args, allow_fail=False):
-              result = subprocess.run(
-                  ["aws", *args, "--endpoint-url", endpoint],
-                  capture_output=True,
-                  text=True,
-              )
-              if result.returncode != 0 and not allow_fail:
-                  print(result.stderr, file=sys.stderr)
-                  sys.exit(1)
-              return result
-
-          failures = []
-
-          with tempfile.TemporaryDirectory() as tmpdir:
-              manifest_local = Path(tmpdir) / "manifest.json"
-              run_aws(["s3", "cp", f"s3://{bucket}/{prefix}manifest.json", str(manifest_local)])
-              with manifest_local.open(encoding="utf-8") as fh:
-                  manifest = json.load(fh)
-
-              v = manifest["validation"]
-              if v["status"] != "complete":
-                  failures.append(f"validation.status is '{v['status']}', expected 'complete'")
-              if v["districts_expected"] != 25 or v["districts_included"] != 25:
-                  failures.append(f"districts {v['districts_included']}/{v['districts_expected']}, expected 25/25")
-              if v["counties_expected"] != 254 or v["counties_included"] != 254:
-                  failures.append(f"counties {v['counties_included']}/{v['counties_expected']}, expected 254/254")
-              if v["required_missing"] != 0:
-                  failures.append(f"{v['required_missing']} required artifact(s) missing")
-              if v["required_invalid"] != 0:
-                  failures.append(f"{v['required_invalid']} required artifact(s) invalid")
-
-              expected_remote_count = len(manifest["artifacts"]) + 1  # +1 for manifest.json itself
-
-              listing_raw = run_aws(
-                  ["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", prefix, "--output", "json"]
-              ).stdout
-              listing = json.loads(listing_raw) if listing_raw.strip() else {}
-              if listing.get("IsTruncated"):
-                  failures.append("object listing was truncated (>1000 objects); this check does not paginate")
-
-              remote_count = len(listing.get("Contents", []))
-              if remote_count != expected_remote_count:
-                  failures.append(
-                      f"remote object count {remote_count} != expected {expected_remote_count} "
-                      "(manifest artifacts + manifest.json)"
-                  )
-
-              # current.json may not exist yet (first promotion ever) --
-              # that is success, not a failure, so head-object is allowed
-              # to fail here.
-              current_release_id = None
-              head_current = run_aws(
-                  ["s3api", "head-object", "--bucket", bucket, "--key", "current.json", "--output", "json"],
-                  allow_fail=True,
-              )
-              if head_current.returncode == 0:
-                  current_local = Path(tmpdir) / "current.json"
-                  run_aws(["s3", "cp", f"s3://{bucket}/current.json", str(current_local)])
-                  with current_local.open(encoding="utf-8") as fh:
-                      current = json.load(fh)
-                  current_release_id = current.get("release_id")
-
-              if current_release_id == release_id:
-                  failures.append(
-                      f"release '{release_id}' is already the current release -- promotion would be a no-op"
-                  )
-
-              print("Promotion dry-run validation")
-              print(f"  release_id:           {release_id}")
-              print(f"  git_sha_short:        {git_sha_short}")
-              print(f"  resolved prefix:      {prefix}")
-              print(f"  manifest status:      {v['status']}")
-              print(f"  districts:            {v['districts_included']}/{v['districts_expected']}")
-              print(f"  counties:             {v['counties_included']}/{v['counties_expected']}")
-              print(f"  required_missing:     {v['required_missing']}")
-              print(f"  required_invalid:     {v['required_invalid']}")
-              print(f"  remote object count:  {remote_count} (expected {expected_remote_count})")
-              print(f"  current release_id:   {current_release_id if current_release_id else '(none -- first promotion)'}")
-              print(f"  would-be previous_release_id: {current_release_id if current_release_id else '(none)'}")
-
-              if failures:
-                  for reason in failures:
-                      print(f"::error::Promotion validation failed: {reason}")
-                  sys.exit(1)
-
-              print()
-              print(f"Current release: {current_release_id if current_release_id else 'none'}")
-              print(f"Target release:  {release_id}")
-              print(f"Resolved prefix: {prefix}")
-              print(f"Manifest status: {v['status']}")
-              print(f"Remote object count: {remote_count}")
-              print("Promotion validation: PASSED")
-              print("No R2 objects have been modified yet -- proceeding to write current.json.")
-
-              # Passed as a plain string, empty when there is no current
-              # release; the next step treats an empty string as "null" for
-              # previous_release_id, since GITHUB_OUTPUT has no native
-              # concept of None.
-              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out_fh:
-                  out_fh.write(f"current_release_id={current_release_id or ''}\n")
-          PY
+          python3 scripts/release/promote_check.py \
+            --bucket "${CF_R2_BUCKET}" \
+            --release-id "${RELEASE_ID}" \
+            --endpoint-url "https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Construct and validate current.json locally
         # Pure local file construction + validation -- no R2 call in this
@@ -299,9 +151,9 @@ jobs:
         # once this one has confirmed the local file is well-formed.
         id: build_current_json
         env:
-          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
-          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
-          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
+          RELEASE_ID: ${{ steps.validate_release.outputs.release_id }}
+          GIT_SHA_SHORT: ${{ steps.validate_release.outputs.git_sha_short }}
+          RESOLVED_PREFIX: ${{ steps.validate_release.outputs.release_prefix }}
           CURRENT_RELEASE_ID: ${{ steps.validate_release.outputs.current_release_id }}
         run: |
           python3 <<'PY'
@@ -418,9 +270,9 @@ jobs:
           AWS_DEFAULT_REGION: auto
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
-          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
-          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
-          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
+          RELEASE_ID: ${{ steps.validate_release.outputs.release_id }}
+          GIT_SHA_SHORT: ${{ steps.validate_release.outputs.git_sha_short }}
+          RESOLVED_PREFIX: ${{ steps.validate_release.outputs.release_prefix }}
           CURRENT_RELEASE_ID: ${{ steps.validate_release.outputs.current_release_id }}
           LOCAL_SHA256: ${{ steps.build_current_json.outputs.local_sha256 }}
         run: |
@@ -494,9 +346,9 @@ jobs:
 
       - name: Print promotion summary
         env:
-          RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
-          GIT_SHA_SHORT: ${{ steps.validate_inputs.outputs.git_sha_short }}
-          RESOLVED_PREFIX: ${{ steps.resolve_prefix.outputs.resolved_prefix }}
+          RELEASE_ID: ${{ steps.validate_release.outputs.release_id }}
+          GIT_SHA_SHORT: ${{ steps.validate_release.outputs.git_sha_short }}
+          RESOLVED_PREFIX: ${{ steps.validate_release.outputs.release_prefix }}
           CURRENT_RELEASE_ID: ${{ steps.validate_release.outputs.current_release_id }}
         run: |
           set -euo pipefail

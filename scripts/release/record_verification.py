@@ -16,7 +16,9 @@ release is promoted, current, or still unmodified since verification.
 
 This script only validates inputs and writes the record to a local file; the
 workflow does the existence check (check_prefix.py --verification-record) and
-the upload. Standard library only.
+the upload. `validate_record` is the single definition of a valid record: it
+applies the same field rules `build_record` does, and promote_check.py uses it
+on the record it downloads. Standard library only.
 
 Exit status: 0 when the record was written, 1 on invalid input or a missing
 manifest.
@@ -45,6 +47,16 @@ RELEASE_ID_RE = re.compile(
     r"[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3])[0-5][0-9]Z-[0-9a-f]{7,40}"
 )
 GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+RECORD_FIELDS = (
+    "schema_version",
+    "release_id",
+    "manifest_sha256",
+    "git_sha",
+    "verified_at",
+    "run_url",
+)
 
 
 class RecordError(ValueError):
@@ -56,7 +68,70 @@ def verification_record_key(release_id: str) -> str:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
+
+
+def _is_str(value) -> bool:
+    return isinstance(value, str)
+
+
+def check_release_id(release_id) -> None:
+    if not (_is_str(release_id) and RELEASE_ID_RE.fullmatch(release_id)):
+        raise RecordError(
+            f"release_id {release_id!r} does not match <UTC timestamp>-<git short sha>"
+        )
+
+
+def _check_git_sha(git_sha, release_id: str) -> None:
+    if not (_is_str(git_sha) and GIT_SHA_RE.fullmatch(git_sha)):
+        raise RecordError(f"git_sha {git_sha!r} is not a full 40-character lowercase hex SHA")
+    short_sha = release_id.rsplit("-", 1)[1]
+    if not git_sha.startswith(short_sha):
+        raise RecordError(
+            f"git_sha {git_sha} does not match the release ID's short SHA {short_sha}"
+        )
+
+
+def _check_run_url(run_url) -> None:
+    if not (_is_str(run_url) and run_url.startswith("https://")):
+        raise RecordError(f"run_url {run_url!r} is not an https URL")
+
+
+def _check_verified_at(verified_at) -> None:
+    try:
+        datetime.strptime(verified_at, TIMESTAMP_FORMAT)
+    except (TypeError, ValueError) as exc:
+        raise RecordError(
+            f"verified_at {verified_at!r} is not a UTC timestamp like 2026-09-29T14:30:05Z"
+        ) from exc
+
+
+def validate_record(record, *, release_id: str) -> None:
+    """Raise RecordError unless ``record`` is a valid record for ``release_id``.
+
+    The same field rules build_record applies, plus the exact field set, the
+    schema version and the expected release ID.
+    """
+    if not isinstance(record, dict):
+        raise RecordError("verification record is not a JSON object")
+    if set(record) != set(RECORD_FIELDS):
+        raise RecordError(
+            f"verification record fields {sorted(record)} != expected {sorted(RECORD_FIELDS)}"
+        )
+    version = record["schema_version"]
+    if type(version) is not int or version != SCHEMA_VERSION:
+        raise RecordError(f"schema_version {version!r} is not {SCHEMA_VERSION}")
+    check_release_id(record["release_id"])
+    if record["release_id"] != release_id:
+        raise RecordError(
+            f"record release_id {record['release_id']!r} != requested release {release_id!r}"
+        )
+    sha = record["manifest_sha256"]
+    if not (_is_str(sha) and SHA256_RE.fullmatch(sha)):
+        raise RecordError(f"manifest_sha256 {sha!r} is not 64 lowercase hex characters")
+    _check_git_sha(record["git_sha"], release_id)
+    _check_verified_at(record["verified_at"])
+    _check_run_url(record["run_url"])
 
 
 def build_record(
@@ -68,19 +143,10 @@ def build_record(
     verified_at: str,
 ) -> dict:
     """The verification record for ``release_id``; raises RecordError on bad input."""
-    if not RELEASE_ID_RE.fullmatch(release_id):
-        raise RecordError(
-            f"release_id {release_id!r} does not match <UTC timestamp>-<git short sha>"
-        )
-    if not GIT_SHA_RE.fullmatch(git_sha):
-        raise RecordError(f"git_sha {git_sha!r} is not a full 40-character lowercase hex SHA")
-    short_sha = release_id.rsplit("-", 1)[1]
-    if not git_sha.startswith(short_sha):
-        raise RecordError(
-            f"git_sha {git_sha} does not match the release ID's short SHA {short_sha}"
-        )
-    if not run_url.startswith("https://"):
-        raise RecordError(f"run_url {run_url!r} is not an https URL")
+    check_release_id(release_id)
+    _check_git_sha(git_sha, release_id)
+    _check_run_url(run_url)
+    _check_verified_at(verified_at)
     if not manifest_bytes:
         raise RecordError("manifest is empty")
 
