@@ -89,6 +89,18 @@ jobs:
       - name: Validate output
         run: uv run python -m txdot_overlay validate-output
 
+      - name: Validate offline packages
+        # Deep check of the District/Statewide bulk ZIPs that build-all
+        # produced: exact membership, ZIP_STORED, no directory/duplicate
+        # entries, and every embedded county KMZ byte-identical to its
+        # standalone canonical KMZ. validate-output never opens the ZIPs and
+        # generate-manifest only checks that each one is a non-empty
+        # readable archive, so this is the only step that proves their
+        # contents. Deliberately no continue-on-error: a failure here must
+        # stop the candidate before manifest generation, gating, packaging
+        # and upload.
+        run: uv run python -m txdot_overlay validate-offline-packages
+
       - name: Generate manifest
         # generate-manifest (commands/generate_manifest.py) intentionally
         # returns 0 only when manifest.complete is True, else 1 -- by

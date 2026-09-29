@@ -16,9 +16,10 @@ manifest contract"):
   5. content-type of that same representative set
 
 Checks 1-3 cover every artifact; 4-5 go deep on one artifact per upload
-pass/product type. Every District ZIP is uploaded by the same pass and is
-already count/size-checked here and deeply validated locally by
-validate-offline-packages, so one representative District ZIP proves the
+pass/product type. Every District ZIP is uploaded by the same pass, is
+count/size-checked here, and had its contents validated before packaging by
+release-staging.yml's "Validate offline packages" step
+(validate-offline-packages), so one representative District ZIP proves the
 remote path; the Statewide ZIP is unique, so it is checked directly.
 
 Extracted verbatim in behavior from the former inline heredoc in
