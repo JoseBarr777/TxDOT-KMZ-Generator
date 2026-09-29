@@ -141,6 +141,28 @@ jobs:
           echo "Release ID: ${release_id}"
           echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
 
+      - name: Check release prefix is unused
+        # Release prefixes are immutable, and the upload below is aws s3
+        # sync without --delete: syncing into an occupied prefix would
+        # overwrite it in place and keep stale objects. Guard logic lives in
+        # scripts/release/check_prefix.py; it lists at most one key under
+        # releases/<id>/ and fails if any object exists or the listing
+        # fails. No continue-on-error / if: a failure here skips upload and
+        # verification.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/check_prefix.py \
+            --bucket "${CF_R2_BUCKET}" \
+            --release-id "${RELEASE_ID}" \
+            --endpoint-url "https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
       - name: Upload release to R2 (staging)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
