@@ -9,6 +9,7 @@ names exist (see acquisition.inspect).
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,15 @@ logger = get_logger(__name__)
 
 class ArcGISRequestError(RuntimeError):
     """Raised when an ArcGIS REST endpoint returns an error or unexpected payload."""
+
+
+class ArcGISIncompleteResultError(ArcGISRequestError):
+    """Every request succeeded, but the assembled result is not the complete,
+    duplicate-free set of features the service reports for the query."""
+
+
+# At most this many duplicate object IDs are named in an error message.
+_MAX_REPORTED_DUPLICATES = 5
 
 
 @dataclass
@@ -106,7 +116,13 @@ class ArcGISLayerClient:
             f"{self.layer_url}/query",
             {"where": where, "returnCountOnly": "true", "f": "json"},
         )
-        return int(payload["count"])
+        try:
+            return int(payload["count"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ArcGISRequestError(
+                f"{self.layer_url}: count query for where={where!r} returned no usable "
+                f"count: {payload!r}"
+            ) from exc
 
     def query_geojson_page(
         self,
@@ -116,6 +132,7 @@ class ArcGISLayerClient:
         result_offset: int = 0,
         result_record_count: int | None = None,
         return_geometry: bool = True,
+        order_by_fields: str | None = None,
     ) -> dict[str, Any]:
         """Fetch a single page of features as a GeoJSON FeatureCollection.
 
@@ -132,31 +149,53 @@ class ArcGISLayerClient:
         }
         if result_record_count is not None:
             params["resultRecordCount"] = result_record_count
+        if order_by_fields is not None:
+            params["orderByFields"] = order_by_fields
         return self._get(f"{self.layer_url}/query", params)
 
     def query_geojson_all(
         self,
         *,
+        object_id_field: str,
         where: str = "1=1",
         out_fields: str = "*",
         page_size: int = 2000,
         return_geometry: bool = True,
     ) -> dict[str, Any]:
-        """Page through every matching feature, returning one merged FeatureCollection.
+        """Page through every matching feature and return one merged,
+        verified-complete FeatureCollection.
 
-        Stops only on an empty page, and advances the offset by the number
-        of features actually returned -- never by the requested `page_size`.
-        A service may silently cap the returned count below what was
-        requested via its own (possibly smaller) `maxRecordCount`: confirmed
-        live for `TxDOT_City_Boundaries` (`maxRecordCount=1000` while this
-        project's configured page size is 2000). Treating "fewer features
-        than requested" as an end-of-data signal under-fetches in that case
-        (silently missing the remainder of the layer), and advancing the
-        offset by the requested page_size rather than the actual count would
-        additionally skip records on the next page.
+        1. Ask the service how many features match (`count(where)`, once).
+        2. Page with `resultOffset`, ordered by `object_id_field` ascending so
+           offsets address a stable sequence. Stop when the running total
+           reaches that count, or on an empty page.
+        3. Require the fetched total to equal the count, and every feature's
+           object ID to be present and unique. Otherwise raise
+           ArcGISIncompleteResultError -- never return a partial result, so a
+           caller that caches only on success (DiskCache.get_or_fetch) can
+           never store one.
+
+        The offset advances by the number of features actually returned,
+        never by the requested `page_size`: a service may silently cap each
+        page below what was requested via its own (possibly smaller)
+        `maxRecordCount` -- confirmed live for `TxDOT_City_Boundaries`
+        (`maxRecordCount=1000` while this project's configured page size is
+        2000). Advancing by `page_size` would skip records, and treating a
+        short page as the end would under-fetch.
+
+        `exceededTransferLimit` is deliberately not consulted: the count is
+        the authoritative completion signal, and where that flag appears in
+        a GeoJSON response varies by server.
+
+        ArcGIS is a live service; the count and the pages are separate
+        requests. An edit landing between them shows up as a count mismatch
+        or duplicate IDs and fails the fetch, to be retried by a later run.
         """
+        expected_count = self.count(where)
         all_features: list[dict[str, Any]] = []
         offset = 0
+        # At least one page is always requested, so features on a layer whose
+        # count claims zero still surface as a mismatch.
         while True:
             page = self.query_geojson_page(
                 where=where,
@@ -164,10 +203,50 @@ class ArcGISLayerClient:
                 result_offset=offset,
                 result_record_count=page_size,
                 return_geometry=return_geometry,
+                order_by_fields=f"{object_id_field} ASC",
             )
             features = page.get("features", [])
             if not features:
                 break
             all_features.extend(features)
             offset += len(features)
+            if len(all_features) >= expected_count:
+                break
+
+        context = f"{self.layer_url} (where={where!r})"
+        if len(all_features) != expected_count:
+            raise ArcGISIncompleteResultError(
+                f"{context}: incomplete result -- service count reports {expected_count} "
+                f"feature(s), pagination returned {len(all_features)}"
+            )
+        _check_unique_object_ids(all_features, object_id_field, context)
+
+        logger.info(
+            "%s: fetched %d/%d feature(s), unique %s",
+            context,
+            len(all_features),
+            expected_count,
+            object_id_field,
+        )
         return {"type": "FeatureCollection", "features": all_features}
+
+
+def _check_unique_object_ids(
+    features: list[dict[str, Any]], object_id_field: str, context: str
+) -> None:
+    object_ids = [(f.get("properties") or {}).get(object_id_field) for f in features]
+    missing = sum(1 for object_id in object_ids if object_id is None)
+    if missing:
+        raise ArcGISIncompleteResultError(
+            f"{context}: {missing} feature(s) have no object-ID field {object_id_field!r}"
+        )
+    duplicates = sorted(
+        (object_id for object_id, n in Counter(object_ids).items() if n > 1), key=str
+    )
+    if duplicates:
+        shown = ", ".join(str(d) for d in duplicates[:_MAX_REPORTED_DUPLICATES])
+        more = len(duplicates) - _MAX_REPORTED_DUPLICATES
+        suffix = f" (+{more} more)" if more > 0 else ""
+        raise ArcGISIncompleteResultError(
+            f"{context}: {len(duplicates)} duplicate {object_id_field} value(s): {shown}{suffix}"
+        )

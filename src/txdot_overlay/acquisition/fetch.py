@@ -32,6 +32,10 @@ def fetch_source_features(
             retry_backoff_seconds=config.network_retry_backoff_seconds,
         )
         return client.query_geojson_all(
+            # The configured object-ID field (confirmed against each layer's
+            # metadata; see config/config.yaml) keys stable paging and the
+            # duplicate check.
+            object_id_field=source.fields["object_id"],
             where=where,
             out_fields=out_fields,
             page_size=config.network_page_size,

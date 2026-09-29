@@ -11,8 +11,11 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import responses
+from responses import matchers
 
 from txdot_overlay.acquisition import fetch
+from txdot_overlay.acquisition.arcgis_client import ArcGISIncompleteResultError
 from txdot_overlay.acquisition.cache import DiskCache
 
 KEY = "districts__1=1__*"
@@ -152,7 +155,7 @@ class FakeLayerClient:
     def __init__(self, layer_url, **kwargs):
         self.layer_url = layer_url
 
-    def query_geojson_all(self, *, where, out_fields, page_size):
+    def query_geojson_all(self, *, object_id_field, where, out_fields, page_size):
         FakeLayerClient.calls += 1
         if FakeLayerClient.exc is not None:
             raise FakeLayerClient.exc
@@ -199,3 +202,67 @@ def test_source_fetch_failure_propagates_despite_stale_cache(config, cache, fake
     fake_client.exc = RuntimeError("Request failed after 3 attempts")
     with pytest.raises(RuntimeError, match="failed after 3 attempts"):
         fetch.fetch_source_features(source, config, cache)
+
+
+# --- Source completeness failures (real client, mocked HTTP) --------------------
+#
+# An incomplete fetch is a fetch failure: it propagates, it is never cached as
+# a success, and it never falls back to a stale entry.
+
+
+def _mock_incomplete_districts(source):
+    query_url = f"{source.layer_url}/query"
+    responses.add(
+        responses.GET,
+        query_url,
+        json={"count": 25},
+        match=[matchers.query_param_matcher({"returnCountOnly": "true"}, strict_match=False)],
+    )
+    short_page = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "properties": {"OBJECTID": i}} for i in range(24)],
+    }
+    responses.add(
+        responses.GET,
+        query_url,
+        json=short_page,
+        match=[matchers.query_param_matcher({"resultOffset": "0"}, strict_match=False)],
+    )
+    responses.add(
+        responses.GET,
+        query_url,
+        json={"type": "FeatureCollection", "features": []},
+        match=[matchers.query_param_matcher({"resultOffset": "24"}, strict_match=False)],
+    )
+
+
+@responses.activate
+def test_incomplete_fetch_on_a_miss_writes_no_cache_entry(config, cache):
+    source = config.sources["districts"]
+    _mock_incomplete_districts(source)
+
+    with pytest.raises(ArcGISIncompleteResultError, match="reports 25 feature"):
+        fetch.fetch_source_features(source, config, cache)
+
+    assert list(cache.cache_dir.glob("*.json")) == []
+
+
+@responses.activate
+def test_incomplete_refresh_keeps_the_stale_entry_and_does_not_return_it(config, cache):
+    source = config.sources["districts"]
+    FakeLayerClient.calls = 0
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fetch, "ArcGISLayerClient", FakeLayerClient)
+        FakeLayerClient.result = _collection("stale")
+        FakeLayerClient.exc = None
+        fetch.fetch_source_features(source, config, cache)
+    backdated = _age_entry(cache.cache_dir, hours=config.cache_max_age_hours + 1)
+
+    _mock_incomplete_districts(source)
+    with pytest.raises(ArcGISIncompleteResultError):
+        fetch.fetch_source_features(source, config, cache)
+
+    left = _only_cache_file(cache.cache_dir)
+    payload = json.loads(left.read_text(encoding="utf-8"))
+    assert payload["data"] == _collection("stale")
+    assert datetime.fromisoformat(payload["_meta"]["retrieved_at"]) == backdated
