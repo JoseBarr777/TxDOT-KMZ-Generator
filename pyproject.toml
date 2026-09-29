@@ -61,4 +61,4 @@ select = [
 ignore = ["E501", "B905", "B007"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["txdot_overlay"]
+known-first-party = ["txdot_overlay", "release"]
