@@ -272,3 +272,60 @@ jobs:
             --release-id "${RELEASE_ID}" \
             --endpoint-url "https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com" \
             --stage-dir release-stage
+
+      - name: Create verification record
+        # Only reached after "Verify staged release" passed (no step in this
+        # job has continue-on-error or if:). Binds this release ID to the exact
+        # manifest bytes that were uploaded and verified (release-stage/
+        # manifest.json), the full commit SHA and this run. See
+        # scripts/release/record_verification.py.
+        env:
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/record_verification.py \
+            --release-id "${RELEASE_ID}" \
+            --manifest release-stage/manifest.json \
+            --git-sha "${GITHUB_SHA}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output "${RUNNER_TEMP}/verification-record.json"
+
+      - name: Check verification record is unused
+        # Verification records are write-once: fail (closed, on any listing
+        # error too) rather than overwrite an existing verified/<id>.json.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/check_prefix.py --verification-record \
+            --bucket "${CF_R2_BUCKET}" \
+            --release-id "${RELEASE_ID}" \
+            --endpoint-url "https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+      - name: Upload verification record
+        # Durable proof that releases/<id>/ passed verification, stored at
+        # verified/<id>.json -- outside the immutable release prefix, so the
+        # release itself stays exactly manifest.json + listed artifacts.
+        # no-cache: this is process metadata read by promotion, and a record
+        # that is ever revoked (deleted by hand) must stop being served at once.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "${RUNNER_TEMP}/verification-record.json" \
+            "s3://${CF_R2_BUCKET}/verified/${RELEASE_ID}.json" \
+            --endpoint-url "https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --content-type "application/json" \
+            --cache-control "no-cache" \
+            --only-show-errors
+          echo "Verification record written: verified/${RELEASE_ID}.json"

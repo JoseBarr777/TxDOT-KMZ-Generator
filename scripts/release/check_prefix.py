@@ -21,10 +21,17 @@ Contents is a failure, never "empty". Empty stdout with a zero exit is the
 one exception -- some aws CLI versions print nothing for an empty paginated
 listing -- and is read as no objects, matching verify.py.
 
-Exit status: 0 when the prefix is empty, 1 otherwise. Standard library only.
+With --verification-record, the same check guards the write-once
+verified-candidate record instead: it requires that no object exists under
+`verified/<release_id>.json` (see record_verification.py) before staging writes
+one, so an existing record is never overwritten.
+
+Exit status: 0 when the prefix (or record key) is unused, 1 otherwise.
+Standard library only.
 
 Usage:
-    python3 scripts/release/check_prefix.py --bucket B --release-id ID --endpoint-url URL
+    python3 scripts/release/check_prefix.py [--verification-record] \
+        --bucket B --release-id ID --endpoint-url URL
 """
 
 from __future__ import annotations
@@ -59,6 +66,12 @@ def make_run_aws(endpoint: str) -> RunAws:
 
 def release_prefix(release_id: str) -> str:
     return f"releases/{release_id}/"
+
+
+def verification_record_key(release_id: str) -> str:
+    # Must match record_verification.verification_record_key (the scripts
+    # are standalone, so each defines it; a test pins them together).
+    return f"verified/{release_id}.json"
 
 
 def first_existing_key(bucket: str, prefix: str, run_aws: RunAws) -> str | None:
@@ -109,8 +122,16 @@ def first_existing_key(bucket: str, prefix: str, run_aws: RunAws) -> str | None:
     return None
 
 
-def check_prefix(bucket: str, release_id: str, run_aws: RunAws) -> int:
-    """Exit status 0 if releases/<release_id>/ is empty in ``bucket``, else 1."""
+def check_prefix(
+    bucket: str, release_id: str, run_aws: RunAws, *, verification_record: bool = False
+) -> int:
+    """Exit status 0 if releases/<release_id>/ is empty in ``bucket``, else 1.
+
+    With ``verification_record``, checks verified/<release_id>.json instead.
+    """
+    if verification_record:
+        return _check_verification_record(bucket, release_id, run_aws)
+
     prefix = release_prefix(release_id)
     print("Release prefix check")
     print(f"  bucket:  {bucket}")
@@ -142,13 +163,54 @@ def check_prefix(bucket: str, release_id: str, run_aws: RunAws) -> int:
     return 0
 
 
+def _check_verification_record(bucket: str, release_id: str, run_aws: RunAws) -> int:
+    key = verification_record_key(release_id)
+    print("Verification record check")
+    print(f"  bucket:  {bucket}")
+    print(f"  key:     {key}")
+
+    try:
+        existing_key = first_existing_key(bucket, key, run_aws)
+    except PrefixCheckError as exc:
+        print(f"::error::Verification record check failed for {key}: {exc}")
+        print(
+            "::error::Could not confirm no verification record exists, so none will be "
+            "written. The release stays unverified; re-run the staging workflow."
+        )
+        return 1
+
+    if existing_key is not None:
+        print(
+            f"::error::Verification record {key} already exists in bucket '{bucket}' "
+            f"(found: {existing_key})."
+        )
+        print(
+            "::error::Verification records are write-once; the existing record will not be "
+            "overwritten. Re-run the staging workflow to generate a new release ID."
+        )
+        return 1
+
+    print(f"Verification record check passed: {key} does not exist.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--endpoint-url", required=True)
+    parser.add_argument(
+        "--verification-record",
+        action="store_true",
+        help="check verified/<release_id>.json instead of releases/<release_id>/",
+    )
     args = parser.parse_args(argv)
-    return check_prefix(args.bucket, args.release_id, make_run_aws(args.endpoint_url))
+    return check_prefix(
+        args.bucket,
+        args.release_id,
+        make_run_aws(args.endpoint_url),
+        verification_record=args.verification_record,
+    )
 
 
 if __name__ == "__main__":

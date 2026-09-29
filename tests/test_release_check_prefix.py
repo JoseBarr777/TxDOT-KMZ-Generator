@@ -219,3 +219,69 @@ def test_script_fails_closed_on_nonzero_aws_exit(tmp_path):
     result = _run_script(env)
     assert result.returncode == 1
     assert "Could not connect to the endpoint URL" in result.stdout
+
+
+# --- Write-once verification record (--verification-record) --------------------
+
+RECORD_KEY = f"verified/{RELEASE_ID}.json"
+
+
+def _run_record(fake, capsys):
+    rc = check_prefix.check_prefix(BUCKET, RELEASE_ID, fake, verification_record=True)
+    return rc, capsys.readouterr().out
+
+
+def test_record_check_queries_exactly_the_record_key(capsys):
+    fake = FakeAws(_listing())
+    rc, out = _run_record(fake, capsys)
+    assert rc == 0
+    assert f"Verification record check passed: {RECORD_KEY} does not exist." in out
+    (args,) = fake.calls
+    assert args[args.index("--prefix") + 1] == RECORD_KEY
+    assert args[args.index("--max-items") + 1] == "1"
+    # Never the release prefix.
+    assert not any(a.startswith("releases/") for a in args)
+
+
+def test_existing_record_is_never_overwritten(capsys):
+    rc, out = _run_record(FakeAws(_listing(RECORD_KEY)), capsys)
+    assert rc == 1
+    errors = " ".join(_errors(out))
+    assert RECORD_KEY in errors
+    assert "write-once" in errors
+    assert "passed" not in out
+
+
+def test_record_check_fails_closed_on_aws_error(capsys):
+    exc = subprocess.CalledProcessError(254, ["aws"], stderr="AccessDenied")
+    rc, out = _run_record(FakeAws(exc=exc), capsys)
+    assert rc == 1
+    assert "Could not confirm no verification record exists" in " ".join(_errors(out))
+
+
+def test_record_check_fails_closed_on_malformed_response(capsys):
+    rc, _ = _run_record(FakeAws("not json"), capsys)
+    assert rc == 1
+
+
+def test_script_record_mode_passes_flag_through(tmp_path):
+    env, argv_log = _fake_aws_on_path(tmp_path, stdout=_listing(), returncode=0)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/release/check_prefix.py"),
+            "--verification-record",
+            "--bucket",
+            BUCKET,
+            "--release-id",
+            RELEASE_ID,
+            "--endpoint-url",
+            ENDPOINT,
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout
+    argv = json.loads(argv_log.read_text())
+    assert argv[argv.index("--prefix") + 1] == RECORD_KEY
