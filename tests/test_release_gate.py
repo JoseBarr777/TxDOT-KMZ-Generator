@@ -1,9 +1,10 @@
 """Behavior of scripts/release/gate.py, the staging workflow's completeness gate.
 
-The gate checks the manifest's validation summary (status, 25/25 districts,
+The gate first requires a supported manifest schema (a "MAJOR.MINOR" string,
+major 2), then checks the validation summary (status, 25/25 districts,
 254/254 counties, zero required missing/invalid) and, independently, counts
-the Phase 3 bulk-download artifacts in the inventory (exactly 25
-district_zip, exactly 1 statewide_zip).
+artifact types in the inventory (exactly 25 district_zip, exactly 1
+statewide_zip, exactly 1 each of master_kml and the four boundary KMZs).
 """
 
 import json
@@ -18,7 +19,23 @@ from release import gate
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _manifest(*, district_zips=25, statewide_zips=1, **validation_overrides):
+EXACTLY_ONE_TYPES = [
+    "master_kml",
+    "district_boundaries_kmz",
+    "county_boundaries_kmz",
+    "city_boundaries_kmz",
+    "admin_boundaries_kmz",
+]
+
+
+def _manifest(
+    *,
+    schema_version="2.1",
+    district_zips=25,
+    statewide_zips=1,
+    single_counts=None,
+    **validation_overrides,
+):
     validation = {
         "status": "complete",
         "counties_included": 254,
@@ -29,7 +46,11 @@ def _manifest(*, district_zips=25, statewide_zips=1, **validation_overrides):
         "required_invalid": 0,
     }
     validation.update(validation_overrides)
-    artifacts = [{"type": "master_kml", "path": "master.kml"}]
+    counts = {t: 1 for t in EXACTLY_ONE_TYPES}
+    counts.update(single_counts or {})
+    artifacts = [
+        {"type": t, "path": f"{t}-{i}"} for t in EXACTLY_ONE_TYPES for i in range(counts[t])
+    ]
     artifacts += [
         {"type": "district_zip", "path": f"offline/districts/d{i:02d}.zip"}
         for i in range(district_zips)
@@ -38,7 +59,7 @@ def _manifest(*, district_zips=25, statewide_zips=1, **validation_overrides):
         {"type": "statewide_zip", "path": f"offline/statewide-{i}.zip"}
         for i in range(statewide_zips)
     ]
-    return {"validation": validation, "artifacts": artifacts}
+    return {"schema_version": schema_version, "validation": validation, "artifacts": artifacts}
 
 
 def _write(tmp_path, manifest):
@@ -56,10 +77,13 @@ def test_complete_manifest_passes(tmp_path, capsys):
     assert "  districts:          25/25" in out
     assert "  district_zip:       25/25" in out
     assert "  statewide_zip:      1/1" in out
-    assert "  artifact_count:     27" in out
+    for artifact_type in EXACTLY_ONE_TYPES:
+        assert f"  {artifact_type}: 1/1" in out
+    assert "  artifact_count:     31" in out
     assert (
         "Release gate passed: complete statewide release "
-        "(25/25 districts, 254/254 counties, 25 district ZIPs, 1 statewide ZIP)"
+        "(25/25 districts, 254/254 counties, 25 district ZIPs, 1 statewide ZIP, "
+        "master KML, 4 boundary KMZs)"
     ) in out
     assert "::error::" not in out
 
@@ -187,3 +211,62 @@ def test_runs_as_standalone_script(tmp_path):
     )
     assert result.returncode == 1
     assert "::error::Release gate failed: validation.status is 'incomplete'" in result.stdout
+
+
+# --- Exactly-one artifact types ------------------------------------------------
+#
+# A type the producer stopped registering would be in neither `artifacts`
+# nor `skipped`, so the otherwise-complete summary below cannot catch it.
+
+
+@pytest.mark.parametrize("artifact_type", EXACTLY_ONE_TYPES)
+@pytest.mark.parametrize("count", [0, 2])
+def test_exactly_one_types_fail_on_zero_or_duplicates(artifact_type, count):
+    manifest = _manifest(single_counts={artifact_type: count})
+    assert manifest["validation"]["status"] == "complete"
+    assert gate.gate_failures(manifest) == [f"expected 1 {artifact_type} artifact, found {count}"]
+
+
+# --- Manifest schema major version ---------------------------------------------
+
+
+@pytest.mark.parametrize("version", ["2.0", "2.1", "2.2", "2.37"])
+def test_any_2x_schema_version_is_accepted(version):
+    assert gate.gate_failures(_manifest(schema_version=version)) == []
+
+
+@pytest.mark.parametrize(
+    ("version", "reason"),
+    [
+        ("3.0", "manifest schema major version 3 ('3.0') is not supported"),
+        ("1.9", "manifest schema major version 1 ('1.9') is not supported"),
+        (2.1, "schema_version 2.1 is not a 'MAJOR.MINOR' string"),
+        ("2", "schema_version '2' is not a 'MAJOR.MINOR' string"),
+        ("2.x", "schema_version '2.x' is not a 'MAJOR.MINOR' string"),
+        ("2.1.0", "schema_version '2.1.0' is not a 'MAJOR.MINOR' string"),
+        (None, "schema_version None is not a 'MAJOR.MINOR' string"),
+    ],
+)
+def test_unsupported_or_malformed_schema_version_is_rejected(tmp_path, capsys, version, reason):
+    path = _write(tmp_path, _manifest(schema_version=version))
+    assert gate.main(["--manifest", str(path)]) == 1
+    out = capsys.readouterr().out
+    errors = [line for line in out.splitlines() if line.startswith("::error::")]
+    assert len(errors) == 1
+    assert errors[0].startswith(f"::error::Release gate failed: {reason}")
+
+
+def test_missing_schema_version_is_rejected():
+    manifest = _manifest()
+    del manifest["schema_version"]
+    assert gate.gate_failures(manifest) == ["manifest has no schema_version"]
+
+
+def test_unknown_major_is_rejected_before_its_structure_is_read(tmp_path, capsys):
+    # A future major may not have `validation`/`artifacts` at all; the gate
+    # must reject it cleanly, not crash or print a 2.x summary.
+    path = _write(tmp_path, {"schema_version": "3.0", "release": {}})
+    assert gate.main(["--manifest", str(path)]) == 1
+    out = capsys.readouterr().out
+    assert "Manifest validation summary" not in out
+    assert "not supported" in out

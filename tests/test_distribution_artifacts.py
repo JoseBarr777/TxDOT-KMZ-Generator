@@ -22,12 +22,14 @@ from txdot_overlay.export.kml_builder import (
     build_county_boundaries_kml,
     build_district_boundaries_kml,
     build_district_kml,
+    build_master_kml,
 )
 from txdot_overlay.export.layout import (
     ADMIN_BOUNDARIES_KMZ,
     CITY_BOUNDARIES_KMZ,
     COUNTY_BOUNDARIES_KMZ,
     DISTRICT_BOUNDARIES_KMZ,
+    county_kmz_relative_path,
     district_kml_relative_path,
 )
 from txdot_overlay.styling.colors import hex_to_kml_color
@@ -157,6 +159,27 @@ def test_district_kml_links_only_its_own_counties_in_alphabetical_order(alpha_km
 
     assert _names_in(counties_folder, "NetworkLink") == ["Anderson", "Wood"]
     assert "Zapata" not in alpha_kml.kml()
+
+
+def test_master_kml_links_directly_to_every_county_kmz_and_nothing_else(config):
+    # Artifact contract: master.kml and the district KMLs are parallel entry
+    # points; the master links straight to county KMZs, never via a district
+    # KML. Checked for the full href set, across districts.
+    kml = build_master_kml(_districts_gdf(), _counties_gdf(), config, StyleResolver(config))
+    root = ET.fromstring(kml.kml())
+    hrefs = [
+        link.find(f"{KML_NS}Link/{KML_NS}href").text for link in root.iter(f"{KML_NS}NetworkLink")
+    ]
+
+    counties = _counties_gdf()
+    expected = {
+        county_kmz_relative_path(district, county).as_posix()
+        for district, county in zip(counties["DIST_NM"], counties["CNTY_NM"])
+    }
+    assert len(hrefs) == len(expected)
+    assert set(hrefs) == expected
+    assert not any(href.endswith(".kml") for href in hrefs)
+    assert all(not href.startswith("/") and "://" not in href for href in hrefs)
 
 
 def test_district_kml_networklinks_are_relative_to_the_document(alpha_kml):

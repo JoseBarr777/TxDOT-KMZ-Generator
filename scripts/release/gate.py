@@ -1,19 +1,25 @@
 """Release completeness gate for the staging workflow.
 
 Answers: is the generated artifact set eligible to proceed through
-release-staging.yml? Reads manifest.json and requires a complete statewide
-release (validation.status == "complete", 25/25 districts, 254/254
-counties, no required artifact missing or invalid) whose artifact inventory
-also carries the Phase 3 bulk-download contract: exactly 25 district_zip
-artifacts (one per district) and exactly 1 statewide_zip.
+release-staging.yml? Reads manifest.json and requires (see
+docs/ARTIFACT_CONTRACT.md):
 
-The ZIP counts are deliberately redundant with the manifest's own
-completeness verdict: manifest generation already marks both ZIP types
-required, so a missing ZIP normally surfaces as required_missing and a
-non-complete status. Counting them here, straight from `artifacts`, is an
-independent check that the inventory actually satisfies the release
-contract even if the validation summary and the inventory ever disagree.
-It counts entries only; ZIP contents are validate-offline-packages' job.
+  - a supported manifest schema: a "MAJOR.MINOR" string with major 2 (any
+    2.x minor is accepted; an unknown major is rejected before anything
+    else is read, since its structure is not known)
+  - a complete statewide release: validation.status == "complete", 25/25
+    districts, 254/254 counties, no required artifact missing or invalid
+  - explicit inventory cardinalities: exactly 25 district_zip, exactly 1
+    statewide_zip, and exactly 1 each of master_kml and the four boundary
+    KMZ types
+
+The inventory counts are deliberately redundant with the manifest's own
+completeness verdict: the producer marks all of these types required, so
+a missing one normally surfaces as required_missing and a non-complete
+status. But an artifact type the producer stopped registering at all would
+appear in neither `artifacts` nor `skipped` and evade those counters, so
+the gate counts them straight from `artifacts`. It counts entries only;
+artifact contents are the validators' job.
 
 Originally extracted from the inline heredoc in
 .github/workflows/release-staging.yml ("Enforce release completeness
@@ -32,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 
@@ -45,9 +52,43 @@ EXPECTED_STATEWIDE_ZIPS = 1
 DISTRICT_ZIP_TYPE = "district_zip"
 STATEWIDE_ZIP_TYPE = "statewide_zip"
 
+# Types a complete release carries exactly one of.
+EXACTLY_ONE_TYPES = (
+    "master_kml",
+    "district_boundaries_kmz",
+    "county_boundaries_kmz",
+    "city_boundaries_kmz",
+    "admin_boundaries_kmz",
+)
+
+SUPPORTED_SCHEMA_MAJOR = 2
+_SCHEMA_VERSION_RE = re.compile(r"([0-9]+)\.([0-9]+)")
+
+
+def schema_version_failure(manifest: dict) -> str | None:
+    """Why ``manifest``'s schema_version is unsupported, or None if it is 2.x."""
+    if "schema_version" not in manifest:
+        return "manifest has no schema_version"
+    version = manifest["schema_version"]
+    match = _SCHEMA_VERSION_RE.fullmatch(version) if isinstance(version, str) else None
+    if match is None:
+        return f"schema_version {version!r} is not a 'MAJOR.MINOR' string"
+    major = int(match.group(1))
+    if major != SUPPORTED_SCHEMA_MAJOR:
+        return (
+            f"manifest schema major version {major} ({version!r}) is not supported; "
+            f"this release tooling supports {SUPPORTED_SCHEMA_MAJOR}.x"
+        )
+    return None
+
 
 def gate_failures(manifest: dict) -> list[str]:
     """Return the reasons ``manifest`` fails the release gate (empty = pass)."""
+    version_problem = schema_version_failure(manifest)
+    if version_problem is not None:
+        # An unsupported schema's structure is unknown; judge nothing else.
+        return [version_problem]
+
     v = manifest["validation"]
     status = v["status"]
     counties_included = v["counties_included"]
@@ -79,6 +120,11 @@ def gate_failures(manifest: dict) -> list[str]:
         failures.append(
             f"expected {EXPECTED_STATEWIDE_ZIPS} {STATEWIDE_ZIP_TYPE} artifact, found {statewide_zips}"
         )
+    for artifact_type in EXACTLY_ONE_TYPES:
+        if type_counts[artifact_type] != 1:
+            failures.append(
+                f"expected 1 {artifact_type} artifact, found {type_counts[artifact_type]}"
+            )
     return failures
 
 
@@ -94,6 +140,8 @@ def print_summary(manifest: dict) -> None:
     print(f"  required_invalid:   {v['required_invalid']}")
     print(f"  district_zip:       {type_counts[DISTRICT_ZIP_TYPE]}/{EXPECTED_DISTRICT_ZIPS}")
     print(f"  statewide_zip:      {type_counts[STATEWIDE_ZIP_TYPE]}/{EXPECTED_STATEWIDE_ZIPS}")
+    for artifact_type in EXACTLY_ONE_TYPES:
+        print(f"  {artifact_type}: {type_counts[artifact_type]}/1")
     print(f"  artifact_count:     {artifact_count}")
 
 
@@ -109,6 +157,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::{args.manifest} not found -- generate-manifest did not produce output")
         return 1
 
+    # An unsupported schema is rejected before the summary, which assumes
+    # the 2.x structure.
+    version_problem = schema_version_failure(manifest)
+    if version_problem is not None:
+        print(f"::error::Release gate failed: {version_problem}")
+        return 1
+
     # Evaluate before printing so a malformed manifest (missing key) raises
     # before any summary output, as the inline step did; the summary is
     # still printed ahead of the itemized failures.
@@ -122,7 +177,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         "Release gate passed: complete statewide release "
-        "(25/25 districts, 254/254 counties, 25 district ZIPs, 1 statewide ZIP)"
+        "(25/25 districts, 254/254 counties, 25 district ZIPs, 1 statewide ZIP, "
+        "master KML, 4 boundary KMZs)"
     )
     return 0
 
