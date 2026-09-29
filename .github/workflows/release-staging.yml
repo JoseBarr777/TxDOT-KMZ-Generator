@@ -83,6 +83,34 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Assert cold GIS source cache
+        # Production freshness guarantee: every release fetches all GIS
+        # source data (3 statewide layers + 254 per-county roadway queries)
+        # during this staging run. That holds today only because each run
+        # gets a fresh GitHub-hosted runner and data/cache is gitignored and
+        # never restored (no actions/cache, no artifact download). This
+        # turns that into an enforced invariant: if data/cache was ever
+        # pre-populated -- a cache restore, a self-hosted runner, a leftover
+        # workspace -- the release fails here, before the statewide build,
+        # instead of silently building from days-old source data. Nothing is
+        # deleted; the cause is left visible. (Deliberately no
+        # --force-refresh anywhere in this workflow: on a cold cache it is
+        # redundant, and on the post-build commands it would re-fetch
+        # districts/counties and split the release across two source
+        # snapshots.)
+        run: |
+          set -euo pipefail
+          if [[ ! -d data/cache ]]; then
+            echo "::error::data/cache is missing; expected the tracked placeholder directory"
+            exit 1
+          fi
+          leftover="$(find data/cache -mindepth 1 ! -name .gitkeep -print -quit)"
+          if [[ -n "${leftover}" ]]; then
+            echo "::error::data/cache is not empty (found ${leftover}); releases must fetch GIS source data fresh during this run"
+            exit 1
+          fi
+          echo "GIS source cache is cold: all source data will be fetched during this run."
+
       - name: Build statewide artifacts
         run: uv run python -m txdot_overlay build-all
 
