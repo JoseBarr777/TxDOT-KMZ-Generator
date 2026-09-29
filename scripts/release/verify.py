@@ -10,9 +10,16 @@ manifest contract"):
   2. remote object count == manifest artifacts + 1 (manifest.json)
   3. every manifest artifact is present remotely with its manifest size_bytes,
      and manifest.json is present
-  4. re-downloaded sha256 of manifest.json, master.kml, and the first
-     county_kmz artifact matches the local copy / manifest
-  5. content-type of master.kml, that county KMZ, and manifest.json
+  4. re-downloaded sha256 of the representative set -- manifest.json,
+     master.kml, the first county_kmz, the first district_zip, and the
+     statewide_zip -- matches the local copy / manifest
+  5. content-type of that same representative set
+
+Checks 1-3 cover every artifact; 4-5 go deep on one artifact per upload
+pass/product type. Every District ZIP is uploaded by the same pass and is
+already count/size-checked here and deeply validated locally by
+validate-offline-packages, so one representative District ZIP proves the
+remote path; the Statewide ZIP is unique, so it is checked directly.
 
 Extracted verbatim in behavior from the former inline heredoc in
 .github/workflows/release-staging.yml ("Verify staged release"). Remote
@@ -47,6 +54,11 @@ MASTER_KML = "master.kml"
 KML_CONTENT_TYPE = "application/vnd.google-earth.kml+xml"
 KMZ_CONTENT_TYPE = "application/vnd.google-earth.kmz"
 JSON_CONTENT_TYPE = "application/json"
+ZIP_CONTENT_TYPE = "application/zip"
+
+COUNTY_KMZ_TYPE = "county_kmz"
+DISTRICT_ZIP_TYPE = "district_zip"
+STATEWIDE_ZIP_TYPE = "statewide_zip"
 
 # Cap on individually listed size mismatches, so a wholesale failure does
 # not bury the log.
@@ -122,12 +134,12 @@ def size_mismatches(manifest: dict, remote_sizes: dict[str, int]) -> list[str]:
     return mismatches
 
 
-def representative_county(manifest: dict) -> dict:
-    """The first county_kmz artifact in manifest order."""
-    county_artifacts = [a for a in manifest["artifacts"] if a["type"] == "county_kmz"]
-    if not county_artifacts:
-        raise VerificationAborted("No county_kmz artifacts found in manifest")
-    return county_artifacts[0]
+def representative(manifest: dict, artifact_type: str) -> dict:
+    """The first ``artifact_type`` artifact in manifest order."""
+    for artifact in manifest["artifacts"]:
+        if artifact["type"] == artifact_type:
+            return artifact
+    raise VerificationAborted(f"No {artifact_type} artifacts found in manifest")
 
 
 def verify(
@@ -176,16 +188,22 @@ def verify(
                 f"...and {len(mismatches) - MAX_SIZE_MISMATCHES_REPORTED} more size mismatches"
             )
 
-        county = representative_county(manifest)
+        # Resolved before any download, so an impossible release aborts
+        # without partial verification.
+        county = representative(manifest, COUNTY_KMZ_TYPE)
+        district_zip = representative(manifest, DISTRICT_ZIP_TYPE)
+        statewide_zip = representative(manifest, STATEWIDE_ZIP_TYPE)
     except VerificationAborted as exc:
         print(f"::error::{exc}")
         return 1
 
-    # 4: re-download and hash manifest.json, master.kml, one representative county KMZ
+    # 4: re-download and hash the representative set
     targets = {
         MANIFEST_NAME: local_manifest_sha256,
         MASTER_KML: None,  # hashed from the local staged copy
         county["path"]: county["sha256"],
+        district_zip["path"]: district_zip["sha256"],
+        statewide_zip["path"]: statewide_zip["sha256"],
     }
     with tempfile.TemporaryDirectory() as tmpdir:
         for remote_path, expected_hash in targets.items():
@@ -203,10 +221,12 @@ def verify(
                     f"{remote_path}: sha256 mismatch (local {expected_hash}, remote {downloaded_hash})"
                 )
 
-    # 5: content-type checks for one .kml, one .kmz, and manifest.json
+    # 5: content-type checks for the same representative set
     content_type_checks = {
         MASTER_KML: KML_CONTENT_TYPE,
         county["path"]: KMZ_CONTENT_TYPE,
+        district_zip["path"]: ZIP_CONTENT_TYPE,
+        statewide_zip["path"]: ZIP_CONTENT_TYPE,
         MANIFEST_NAME: JSON_CONTENT_TYPE,
     }
     for remote_path, expected_ct in content_type_checks.items():

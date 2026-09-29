@@ -96,9 +96,26 @@ def stage(tmp_path):
         _artifact(stage, "districts/tyler.kml", "district_kml", b"<kml>tyler</kml>"),
         _artifact(stage, "counties/anderson.kmz", "county_kmz", b"PK-anderson"),
         _artifact(stage, "counties/smith.kmz", "county_kmz", b"PK-smith-longer"),
+        _artifact(stage, "offline/abilene.zip", "district_zip", b"PK-abilene-zip"),
+        _artifact(stage, "offline/amarillo.zip", "district_zip", b"PK-amarillo-zip"),
+        _artifact(stage, "offline/texas_statewide.zip", "statewide_zip", b"PK-statewide-zip"),
     ]
-    (stage / "manifest.json").write_text(json.dumps({"artifacts": artifacts}), encoding="utf-8")
+    _write_manifest(stage, artifacts)
     return stage
+
+
+def _write_manifest(stage, artifacts):
+    (stage / "manifest.json").write_text(json.dumps({"artifacts": artifacts}), encoding="utf-8")
+
+
+def _read_artifacts(stage):
+    return json.loads((stage / "manifest.json").read_text(encoding="utf-8"))["artifacts"]
+
+
+def _flip_last_byte(r2, rel):
+    """Same size, different bytes: passes the size check, fails the hash."""
+    body, content_type = r2.objects[PREFIX + rel]
+    r2.objects[PREFIX + rel] = (body[:-1] + bytes([body[-1] ^ 1]), content_type)
 
 
 def _verify(stage, r2):
@@ -115,15 +132,23 @@ def test_faithful_upload_passes(stage, capsys):
     out = capsys.readouterr().out
     assert _errors(out) == []
     assert f"  prefix:              {PREFIX}" in out
-    assert "  local file count:    5" in out
-    assert "  manifest artifacts:  4" in out
-    assert "  remote object count: 5" in out
+    assert "  local file count:    8" in out
+    assert "  manifest artifacts:  7" in out
+    assert "  remote object count: 8" in out
     assert "  size mismatches:     0" in out
     assert "  hash check manifest.json: OK" in out
     assert "  hash check master.kml: OK" in out
-    # The representative county is the first county_kmz in manifest order.
+    # Representatives are the first of each type in manifest order.
     assert "  hash check counties/anderson.kmz: OK" in out
+    assert "  hash check offline/abilene.zip: OK" in out
+    assert "  hash check offline/texas_statewide.zip: OK" in out
+    assert "  content-type master.kml: application/vnd.google-earth.kml+xml" in out
+    assert "  content-type counties/anderson.kmz: application/vnd.google-earth.kmz" in out
+    assert "  content-type offline/abilene.zip: application/zip" in out
+    assert "  content-type offline/texas_statewide.zip: application/zip" in out
+    assert "  content-type manifest.json: application/json" in out
     assert "counties/smith.kmz" not in out
+    assert "offline/amarillo.zip" not in out
     assert "Verification passed: staged release is complete and consistent." in out
 
 
@@ -145,6 +170,15 @@ def test_only_the_expected_prefix_is_read(stage):
         f"s3://{BUCKET}/{PREFIX}manifest.json",
         f"s3://{BUCKET}/{PREFIX}master.kml",
         f"s3://{BUCKET}/{PREFIX}counties/anderson.kmz",
+        f"s3://{BUCKET}/{PREFIX}offline/abilene.zip",
+        f"s3://{BUCKET}/{PREFIX}offline/texas_statewide.zip",
+    ]
+    assert [c[c.index("--key") + 1] for c in r2.calls if c[:2] == ["s3api", "head-object"]] == [
+        f"{PREFIX}master.kml",
+        f"{PREFIX}counties/anderson.kmz",
+        f"{PREFIX}offline/abilene.zip",
+        f"{PREFIX}offline/texas_statewide.zip",
+        f"{PREFIX}manifest.json",
     ]
 
 
@@ -153,9 +187,9 @@ def test_extra_remote_object_fails_count_checks(stage, capsys):
     r2.objects[PREFIX + ".gitkeep"] = (b"", None)
     assert _verify(stage, r2) == 1
     errors = _errors(capsys.readouterr().out)
-    assert "::error::Verification failed: remote object count 6 != local file count 5" in errors
+    assert "::error::Verification failed: remote object count 9 != local file count 8" in errors
     assert (
-        "::error::Verification failed: remote object count 6 != expected 5 "
+        "::error::Verification failed: remote object count 9 != expected 8 "
         "(manifest artifacts + manifest.json)"
     ) in errors
 
@@ -204,12 +238,14 @@ def test_size_mismatch_report_is_capped_at_ten(tmp_path, capsys):
     artifacts = [
         _artifact(stage, "master.kml", "master_kml", b"<kml/>"),
         _artifact(stage, "counties/c00.kmz", "county_kmz", b"PK"),
+        _artifact(stage, "offline/d.zip", "district_zip", b"PKd"),
+        _artifact(stage, "offline/s.zip", "statewide_zip", b"PKs"),
     ]
     artifacts += [
         {"type": "county_kmz", "path": f"counties/x{i:02d}.kmz", "size_bytes": 1, "sha256": ""}
         for i in range(12)
     ]
-    (stage / "manifest.json").write_text(json.dumps({"artifacts": artifacts}), encoding="utf-8")
+    _write_manifest(stage, artifacts)
     assert _verify(stage, FakeR2.mirror(stage)) == 1
     out = capsys.readouterr().out
     assert "  size mismatches:     12" in out
@@ -240,23 +276,69 @@ def test_wrong_content_type_fails(stage, capsys):
     ) in errors
 
 
-def test_content_type_checks_do_not_cover_zips(stage, capsys):
-    # Step 10 is extraction only: ZIP content-type is Step 12's concern.
-    body = b"PK-zip"
-    _artifact(stage, "offline/statewide.zip", "statewide_zip", body)
-    manifest = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
-    manifest["artifacts"].append(
-        {
-            "type": "statewide_zip",
-            "path": "offline/statewide.zip",
-            "size_bytes": len(body),
-            "sha256": hashlib.sha256(body).hexdigest(),
-        }
-    )
-    (stage / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+# --- Bulk-download ZIPs (Step 12) --------------------------------------------
+
+
+@pytest.mark.parametrize("rel", ["offline/abilene.zip", "offline/texas_statewide.zip"])
+def test_zip_hash_mismatch_fails(stage, capsys, rel):
     r2 = FakeR2.mirror(stage)
-    r2.objects[PREFIX + "offline/statewide.zip"] = (body, "binary/octet-stream")
+    _flip_last_byte(r2, rel)
+    assert _verify(stage, r2) == 1
+    out = capsys.readouterr().out
+    assert "  size mismatches:     0" in out
+    assert f"  hash check {rel}: MISMATCH" in out
+    sha_errors = [e for e in _errors(out) if "sha256 mismatch" in e]
+    assert len(sha_errors) == 1
+    assert sha_errors[0].startswith(f"::error::Verification failed: {rel}: sha256 mismatch")
+
+
+@pytest.mark.parametrize("rel", ["offline/abilene.zip", "offline/texas_statewide.zip"])
+@pytest.mark.parametrize("wrong", ["application/octet-stream", "binary/octet-stream", None])
+def test_zip_wrong_content_type_fails(stage, capsys, rel, wrong):
+    r2 = FakeR2.mirror(stage)
+    body, _ = r2.objects[PREFIX + rel]
+    r2.objects[PREFIX + rel] = (body, wrong)
+    assert _verify(stage, r2) == 1
+    assert _errors(capsys.readouterr().out) == [
+        f"::error::Verification failed: {rel}: content-type '{wrong}' != expected 'application/zip'"
+    ]
+
+
+def test_representative_district_zip_is_first_in_manifest_order(stage, capsys):
+    # Not alphabetical, not a hardcoded district: whatever the manifest lists first.
+    artifacts = _read_artifacts(stage)
+    zips = [a for a in artifacts if a["type"] == "district_zip"]
+    others = [a for a in artifacts if a["type"] != "district_zip"]
+    _write_manifest(stage, others + list(reversed(zips)))
+    r2 = FakeR2.mirror(stage)
     assert _verify(stage, r2) == 0
+    out = capsys.readouterr().out
+    assert "  hash check offline/amarillo.zip: OK" in out
+    assert "offline/abilene.zip" not in out
+
+
+def test_non_representative_district_zip_is_still_size_checked(stage, capsys):
+    r2 = FakeR2.mirror(stage)
+    r2.objects[PREFIX + "offline/amarillo.zip"] = (b"PK", CONTENT_TYPES[".zip"])
+    assert _verify(stage, r2) == 1
+    assert (
+        "::error::Verification failed: offline/amarillo.zip: remote size 2 != manifest size 15"
+    ) in _errors(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("missing_type", ["district_zip", "statewide_zip"])
+def test_manifest_without_zip_representative_aborts_before_downloads(stage, capsys, missing_type):
+    artifacts = [a for a in _read_artifacts(stage) if a["type"] != missing_type]
+    for p in (stage / "offline").iterdir():
+        if not any(a["path"] == f"offline/{p.name}" for a in artifacts):
+            p.unlink()
+    _write_manifest(stage, artifacts)
+    r2 = FakeR2.mirror(stage)
+    assert _verify(stage, r2) == 1
+    assert _errors(capsys.readouterr().out) == [
+        f"::error::No {missing_type} artifacts found in manifest"
+    ]
+    assert len(r2.calls) == 1  # only the listing
 
 
 def test_truncated_listing_aborts(stage, capsys):
@@ -292,7 +374,7 @@ def test_empty_remote_prefix_fails(stage, capsys):
         _verify(stage, r2)
     out = capsys.readouterr().out
     assert "  remote object count: 0" in out
-    assert "  size mismatches:     5" in out
+    assert "  size mismatches:     8" in out
 
 
 def test_main_builds_aws_calls_against_the_endpoint(stage, monkeypatch):

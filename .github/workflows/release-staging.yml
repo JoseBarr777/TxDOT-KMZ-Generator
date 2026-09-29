@@ -152,13 +152,17 @@ jobs:
           #
           # aws s3 sync infers .json correctly but does not know .kml/.kmz,
           # so those two extensions get an explicit --content-type pass.
-          # The three passes below partition release-stage/ by extension --
-          # *.kml, *.kmz, then everything else excluding both -- so each
-          # file is touched by exactly one pass. The final (catch-all) pass
-          # explicitly excludes *.kml and *.kmz and therefore can never
-          # re-sync and overwrite the content-type/cache-control already
-          # set on those files by the first two passes.
-          # Cache-Control is long/immutable on all three passes since this
+          # The bulk-download ZIPs (offline/*.zip) also get an explicit
+          # application/zip pass: they are a primary download product, so
+          # their Content-Type is declared rather than left to the CLI's
+          # mimetypes guess, which depends on the runner image.
+          # The four passes below partition release-stage/ by extension --
+          # *.kml, *.kmz, *.zip, then everything else excluding all three --
+          # so each file is touched by exactly one pass. The final
+          # (catch-all) pass explicitly excludes *.kml, *.kmz and *.zip and
+          # therefore can never re-sync and overwrite the content-type/
+          # cache-control already set on those files by the earlier passes.
+          # Cache-Control is long/immutable on all four passes since this
           # prefix is versioned and never overwritten in place.
           aws s3 sync release-stage/ "${dest}" \
             --endpoint-url "${endpoint}" \
@@ -176,7 +180,14 @@ jobs:
 
           aws s3 sync release-stage/ "${dest}" \
             --endpoint-url "${endpoint}" \
-            --exclude "*.kml" --exclude "*.kmz" \
+            --exclude "*" --include "*.zip" \
+            --content-type "application/zip" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+
+          aws s3 sync release-stage/ "${dest}" \
+            --endpoint-url "${endpoint}" \
+            --exclude "*.kml" --exclude "*.kmz" --exclude "*.zip" \
             --cache-control "public, max-age=31536000, immutable" \
             --only-show-errors
 
