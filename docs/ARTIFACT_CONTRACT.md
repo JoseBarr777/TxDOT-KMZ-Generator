@@ -56,8 +56,8 @@ All paths are relative, POSIX-separated, and never escape the release root.
 | `county_boundaries_kmz` | 1 | `boundaries/county_boundaries.kmz` | yes | — | yes | county polygons only |
 | `city_boundaries_kmz` | 1 | `boundaries/city_boundaries.kmz` | yes | — | yes | city polygons only |
 | `admin_boundaries_kmz` | 1 | `boundaries/administrative_boundaries.kmz` | yes | — | yes | combined administrative boundaries |
-| `district_zip` | 25 | `offline/<district>.zip` | yes | `district`, `district_number` | yes | bulk download of one district's county KMZs |
-| `statewide_zip` | 1 | `offline/texas_statewide.zip` | yes | — | yes | bulk download of all 254 county KMZs |
+| `district_zip` | 25 | `offline/<district>.zip` | yes | `district`, `district_number` | yes | bulk download of one district's county KMZs + a Google Earth launcher |
+| `statewide_zip` | 1 | `offline/texas_statewide.zip` | yes | — | yes | bulk download of all 254 county KMZs + a Google Earth launcher |
 | `single_file_kmz` | 0–1 | `txdot_overlay_single_file.kmz` | **no** | — | yes | experimental single-document build |
 
 A complete standard statewide release contains **310 artifact entries**
@@ -160,29 +160,64 @@ requires all of the following:
 ## Bulk ZIP contract
 
 The **County KMZ is the canonical generated artifact.** District and Statewide
-ZIPs are transport containers holding exact copies of it.
+ZIPs are transport containers holding exact copies of it, plus one Google
+Earth launcher KML for navigation.
 
 | | District ZIP | Statewide ZIP |
 |---|---|---|
 | Path | `offline/<district>.zip` | `offline/texas_statewide.zip` |
-| Members | that district's counties | all 254 counties |
-| Member name | `<District> District/<County> County.kmz` | same convention, one folder per district |
+| County members | that district's counties | all 254 counties |
+| County member name | `<District> District/<County> County.kmz` | same convention, one folder per district |
+| Launcher | `<District> District/Open <District> District.kml` | `Open Texas TxDOT Overlay.kml` (ZIP root) |
+
+```text
+District ZIP                           Statewide ZIP
+Tyler District/                        Open Texas TxDOT Overlay.kml
+    Open Tyler District.kml            Abilene District/
+    Anderson County.kmz                    Borden County.kmz ...
+    Smith County.kmz ...               Tyler District/
+                                           Anderson County.kmz ...
+```
 
 Member names use the human-readable TxDOT names (e.g.
-`Tyler District/Smith County.kmz`), not the release-path slugs.
+`Tyler District/Smith County.kmz`), not the release-path slugs. The Statewide
+ZIP contains no District launchers.
 
 Every District and Statewide ZIP:
 
-- contains exactly the expected members: none missing, none unexpected, no
-  duplicates;
+- contains exactly the expected members (its county KMZs and its one
+  launcher): none missing, none unexpected, no duplicates;
 - has no explicit directory entries;
 - stores every member with `ZIP_STORED` (the KMZs are already compressed);
 - writes members in sorted name order, each with the fixed timestamp
   1980-01-01 00:00:00;
-- contains, for every member, bytes identical to the standalone
+- contains, for every county member, bytes identical to the standalone
   `districts/<district>/<county>.kmz` in the same release.
 
 A package is produced only when every county KMZ it needs exists.
+
+### Package launchers
+
+A launcher is the file a person opens in Google Earth Pro after extracting the
+ZIP. It is local package navigation, not a hosted entry point: unlike
+`master.kml` and `districts/<district>.kml`, its links resolve inside the
+extracted package, and it needs no Internet connection.
+
+- District launcher: a `Document` named `<District> District` holding one
+  `NetworkLink` per county, named `<County> County`, in alphabetical order.
+- Statewide launcher: a `Document` named `Texas TxDOT Overlay` holding one
+  `Folder` per district (`<District> District`, alphabetical), each holding
+  that district's county `NetworkLink`s.
+- Every county `NetworkLink` has `visibility` `0` (unchecked) and a
+  `Link/href` that is the county member's path relative to the launcher's own
+  folder (`Smith County.kmz` in a District launcher,
+  `Tyler District/Smith County.kmz` in the Statewide launcher). Each href
+  resolves to a member of the same ZIP.
+- No absolute paths, `..`, URLs, release IDs or other remote references.
+- No GIS content (placemarks, geometry, overlays) and no timestamps.
+
+Whether a given Google Earth Pro version defers all loading of an unchecked
+link until it is checked is observed behavior, not part of this contract.
 
 ## NetworkLink contract
 
@@ -228,6 +263,8 @@ Guaranteed:
   timestamp, and a fixed compression method (`ZIP_DEFLATED` for KMZs,
   `ZIP_STORED` for bulk ZIPs). KMZ entries keep their original external
   attributes; every bulk ZIP member is a regular file with mode `0644`.
+- Launcher KMLs are generated without simplekml, so their bytes depend only on
+  the district and county names, never on process state.
 - Bulk ZIPs are byte-identical for identical input county KMZs, independent of
   source row order.
 - The order of `artifacts` depends only on the source reference data, not on
@@ -252,6 +289,10 @@ byte-identical.
 |---|---|
 | 2.0 | First committed manifest schema: `master_kml`, `district_kml`, `county_kmz`, the four boundary KMZ types, and the `complete`/`partial`/`failed` model. |
 | 2.1 | Additive: `district_zip` and `statewide_zip` added as required types. No existing field, type or path changed. |
+
+Within 2.1, before any 2.1 release was promoted, District and Statewide ZIPs
+gained their package launcher KMLs. This added one member per ZIP and left
+every county member, and the manifest schema, unchanged.
 
 ## Versioning policy
 

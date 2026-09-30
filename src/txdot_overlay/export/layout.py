@@ -93,3 +93,32 @@ def offline_county_archive_path(district_name: str, county_name: str) -> PurePos
     not an oversight.
     """
     return PurePosixPath(f"{district_name} District") / f"{county_name} County.kmz"
+
+
+# --- Package-local Google Earth launchers -------------------------------------
+#
+# Each District/Statewide ZIP carries one launcher KML: a small, human-named
+# entry point a person opens in Google Earth Pro after extracting the ZIP. It
+# only references the packaged county KMZs by relative archive path -- it is
+# local package navigation, a different distribution context from the hosted
+# `master.kml`/`districts/<d>.kml` entry points, whose hrefs are relative to
+# the hosted release tree and do not resolve inside an extracted package.
+
+# The Statewide package's human-facing name (also the Statewide ZIP's
+# manifest display_name).
+STATEWIDE_PACKAGE_NAME = "Texas TxDOT Overlay"
+
+# At the Statewide ZIP root, next to the "<District> District/" folders, so
+# every href it holds is "<District> District/<County> County.kmz" -- exactly
+# offline_county_archive_path.
+STATEWIDE_LAUNCHER_ARCHIVE_PATH = PurePosixPath(f"Open {STATEWIDE_PACKAGE_NAME}.kml")
+
+
+def district_launcher_archive_path(district_name: str) -> PurePosixPath:
+    """Where a District ZIP's launcher KML lives inside that ZIP.
+
+    Inside the district's own folder, next to its county KMZs, so extracting
+    the ZIP yields one "<District> District/" folder whose launcher links each
+    county by bare file name ("<County> County.kmz").
+    """
+    return PurePosixPath(f"{district_name} District") / f"Open {district_name} District.kml"

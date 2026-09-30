@@ -20,8 +20,10 @@ import pytest
 from shapely.geometry import Point
 
 from txdot_overlay.export.layout import (
+    STATEWIDE_LAUNCHER_ARCHIVE_PATH,
     STATEWIDE_OFFLINE_ZIP,
     county_kmz_relative_path,
+    district_launcher_archive_path,
     district_offline_zip_relative_path,
     offline_county_archive_path,
 )
@@ -109,9 +111,11 @@ def test_district_zip_member_names_match_the_layout_contract(cfg):
 
     members = _read_members(tyler.path)
     assert set(members) == {
+        "Tyler District/Open Tyler District.kml",
         offline_county_archive_path("Tyler", "Smith").as_posix(),
         offline_county_archive_path("Tyler", "Anderson").as_posix(),
     }
+    assert district_launcher_archive_path("Tyler").as_posix() in members
 
 
 def test_district_zip_members_use_zip_stored(cfg):
@@ -149,10 +153,12 @@ def test_multiple_districts_produce_independent_zips(cfg):
     tyler = next(d for d in result.districts if d.district_name == "Tyler")
     abilene = next(d for d in result.districts if d.district_name == "Abilene")
     assert set(_read_members(tyler.path)) == {
+        district_launcher_archive_path("Tyler").as_posix(),
         offline_county_archive_path("Tyler", "Smith").as_posix(),
         offline_county_archive_path("Tyler", "Anderson").as_posix(),
     }
     assert set(_read_members(abilene.path)) == {
+        district_launcher_archive_path("Abilene").as_posix(),
         offline_county_archive_path("Abilene", "Borden").as_posix(),
     }
 
@@ -169,20 +175,29 @@ def test_statewide_zip_contains_counties_from_all_districts(cfg):
     assert result.statewide_built
     members = set(_read_members(result.statewide_path))
     assert members == {
+        "Open Texas TxDOT Overlay.kml",
         offline_county_archive_path("Tyler", "Smith").as_posix(),
         offline_county_archive_path("Tyler", "Anderson").as_posix(),
         offline_county_archive_path("Abilene", "Borden").as_posix(),
     }
+    assert STATEWIDE_LAUNCHER_ARCHIVE_PATH.as_posix() in members
 
 
-def test_statewide_zip_uses_the_same_archive_member_paths_as_district_zips(cfg):
+def test_statewide_zip_uses_the_same_county_member_paths_as_district_zips(cfg):
     districts = [TYLER]
     _write_all(cfg, districts)
 
     result = build_offline_packages(cfg, _districts_gdf(districts), _counties_gdf(districts))
     tyler = next(d for d in result.districts if d.district_name == "Tyler")
 
-    assert set(_read_members(tyler.path)) == set(_read_members(result.statewide_path))
+    def county_members(path):
+        return {name for name in _read_members(path) if name.endswith(".kmz")}
+
+    assert county_members(tyler.path) == county_members(result.statewide_path)
+    # Only the statewide launcher, never the district launchers.
+    assert district_launcher_archive_path("Tyler").as_posix() not in _read_members(
+        result.statewide_path
+    )
 
 
 def test_statewide_zip_members_use_zip_stored(cfg):

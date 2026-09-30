@@ -169,6 +169,7 @@ def test_complete_build_reports_district_and_statewide_packages_as_built(cfg, mo
     assert abilene_zip.exists()
     with zipfile.ZipFile(tyler_zip) as zf:
         assert set(zf.namelist()) == {
+            "Tyler District/Open Tyler District.kml",
             offline_county_archive_path("Tyler", "Smith").as_posix(),
             offline_county_archive_path("Tyler", "Anderson").as_posix(),
         }

@@ -8,6 +8,17 @@ touches roadway/boundary geometry. It only reads bytes that
 already uses, and re-packages those exact bytes as opaque ZIP members
 through the shared deterministic writer (`export.zip_utils`).
 
+Each package also carries one small Google Earth launcher KML
+(`export/package_launcher.py`): the obvious file to open after extracting,
+which lists the packaged counties, all unchecked, by relative archive path.
+It adds navigation only; the county KMZ members stay byte-identical to the
+canonical standalone files.
+
+  District ZIP:   <District> District/Open <District> District.kml
+                  <District> District/<County> County.kmz ...
+  Statewide ZIP:  Open Texas TxDOT Overlay.kml
+                  <District> District/<County> County.kmz ...   (every district)
+
 District/county *membership* here means the same thing it means everywhere
 else in this project: `district_name`/`county_name` (DIST_NM/CNTY_NM) are
 human-readable display identity, used only for the archive's folder/file
@@ -28,10 +39,16 @@ import geopandas as gpd
 
 from txdot_overlay.config import Config
 from txdot_overlay.export.layout import (
+    STATEWIDE_LAUNCHER_ARCHIVE_PATH,
     STATEWIDE_OFFLINE_ZIP,
     county_kmz_relative_path,
+    district_launcher_archive_path,
     district_offline_zip_relative_path,
     offline_county_archive_path,
+)
+from txdot_overlay.export.package_launcher import (
+    build_district_launcher,
+    build_statewide_launcher,
 )
 from txdot_overlay.export.zip_utils import write_deterministic_zip
 from txdot_overlay.logging_setup import get_logger
@@ -112,9 +129,10 @@ def _build_district_package(
     district_name: str,
     county_names: list[str],
 ) -> tuple[DistrictPackageResult, list[tuple[str, bytes, int]]]:
-    """Returns the district's result plus the (arcname, data, external_attr)
-    entries it read, so a statewide build can reuse those already-read bytes
-    instead of reading every county KMZ from disk a second time.
+    """Returns the district's result plus the county (arcname, data,
+    external_attr) entries it read -- not its launcher -- so a statewide build
+    can reuse those already-read bytes instead of reading every county KMZ
+    from disk a second time.
     """
     zip_path = config.output_dir / district_offline_zip_relative_path(district_name)
 
@@ -142,10 +160,18 @@ def _build_district_package(
         )
         return result, []
 
+    launcher = (
+        district_launcher_archive_path(district_name).as_posix(),
+        build_district_launcher(district_name, county_names),
+        _ARCHIVE_MEMBER_EXTERNAL_ATTR,
+    )
     zip_path.parent.mkdir(parents=True, exist_ok=True)
-    write_deterministic_zip(entries, zip_path, compress_type=zipfile.ZIP_STORED)
+    # One compression method per archive: ZIP_STORED, because the county KMZs
+    # are already compressed. The launcher KML is a few KB of text, not worth
+    # a per-entry compression mode in the shared writer.
+    write_deterministic_zip([*entries, launcher], zip_path, compress_type=zipfile.ZIP_STORED)
     logger.info(
-        "%s District offline package: %d county KMZ(s) -> %s",
+        "%s District offline package: %d county KMZ(s) + launcher -> %s",
         district_name,
         len(entries),
         zip_path,
@@ -183,6 +209,7 @@ def build_offline_packages(
     district_results: list[DistrictPackageResult] = []
     statewide_entries: list[tuple[str, bytes, int]] = []
     statewide_missing: list[str] = []
+    statewide_hierarchy: list[tuple[str, list[str]]] = []
 
     for district_name in district_names:
         district_name = str(district_name)
@@ -190,6 +217,7 @@ def build_offline_packages(
 
         result, entries = _build_district_package(config, district_name, county_names)
         district_results.append(result)
+        statewide_hierarchy.append((district_name, county_names))
 
         if result.built:
             statewide_entries.extend(entries)
@@ -208,12 +236,19 @@ def build_offline_packages(
         )
         statewide_path = None
     else:
+        statewide_launcher = (
+            STATEWIDE_LAUNCHER_ARCHIVE_PATH.as_posix(),
+            build_statewide_launcher(statewide_hierarchy),
+            _ARCHIVE_MEMBER_EXTERNAL_ATTR,
+        )
         statewide_zip_path.parent.mkdir(parents=True, exist_ok=True)
         write_deterministic_zip(
-            statewide_entries, statewide_zip_path, compress_type=zipfile.ZIP_STORED
+            [*statewide_entries, statewide_launcher],
+            statewide_zip_path,
+            compress_type=zipfile.ZIP_STORED,
         )
         logger.info(
-            "Statewide offline package: %d county KMZ(s) across %d district(s) -> %s",
+            "Statewide offline package: %d county KMZ(s) across %d district(s) + launcher -> %s",
             len(statewide_entries),
             len(district_results),
             statewide_zip_path,
