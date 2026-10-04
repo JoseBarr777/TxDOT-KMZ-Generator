@@ -4,7 +4,10 @@ A release is promotable only if all of these hold, checked read-only against R2
 before release-promote.yml writes current.json:
 
   1. the release ID has the staging format (no path content);
-  2. it is not already the current release (re-promoting is refused);
+  2. it is not already the current release (re-promoting is refused) and,
+     with --require-newer (automatic promotion), it is strictly newer than the
+     current release, so a stale rerun can never replace a newer release;
+     manual promotion omits the flag, which is what keeps rollback possible;
   3. releases/<release_id>/manifest.json exists -- the current release layout
      only; legacy releases/test-<release_id>/ prefixes are not promotable;
   4. the manifest passes the release gate (scripts/release/gate.py): a
@@ -32,7 +35,7 @@ only.
 
 Usage:
     python3 scripts/release/promote_check.py --bucket B --release-id ID \\
-        --endpoint-url URL [--github-output PATH]
+        --endpoint-url URL [--require-newer] [--github-output PATH]
 """
 
 from __future__ import annotations
@@ -135,6 +138,37 @@ def count_remote_objects(run_aws: RunAws, bucket: str, prefix: str) -> int:
 # --- Pure checks ---------------------------------------------------------------
 
 
+def release_timestamp(release_id: str) -> str:
+    """The release ID's UTC timestamp, e.g. 2026-09-29T1412Z.
+
+    Fixed-width and zero-padded (date -u +'%Y-%m-%dT%H%MZ' in
+    release-staging.yml), so these strings sort chronologically. Only this part
+    is compared: within one minute, comparing whole IDs would fall through to
+    the git SHAs, whose order means nothing.
+    """
+    return release_id.rsplit("-", 1)[0]
+
+
+def ordering_failure(release_id: str, current_id: str | None) -> str | None:
+    """Why ``release_id`` is not newer than the current release, or None if it is.
+
+    Used only with --require-newer. No current release is not a failure (first
+    promotion). A same-minute candidate is not newer: refused, never guessed.
+    """
+    if current_id is None:
+        return None
+    try:
+        record_verification.check_release_id(current_id)
+    except record_verification.RecordError:
+        return f"current release_id {current_id!r} has no comparable timestamp"
+    if release_timestamp(release_id) <= release_timestamp(current_id):
+        return (
+            f"candidate release {release_id} is not newer than current release {current_id} "
+            "-- automatic promotion only moves forward"
+        )
+    return None
+
+
 def current_release_id_from(current_bytes: bytes | None) -> str | None:
     """The release current.json points at, or None if there is no current.json."""
     if current_bytes is None:
@@ -210,7 +244,7 @@ def candidate_failures(
 
 
 def check_candidate(
-    bucket: str, release_id: str, run_aws: RunAws, workdir: Path
+    bucket: str, release_id: str, run_aws: RunAws, workdir: Path, *, require_newer: bool = False
 ) -> tuple[int, dict[str, str]]:
     """(exit status, outputs). Only read-only AWS calls are made."""
     prefix = release_prefix(release_id)
@@ -230,6 +264,10 @@ def check_candidate(
             raise PromotionRefused(
                 f"release '{release_id}' is already the current release -- nothing to promote"
             )
+        if require_newer:
+            stale = ordering_failure(release_id, current_id)
+            if stale is not None:
+                raise PromotionRefused(stale)
 
         manifest_bytes = fetch_optional(run_aws, bucket, f"{prefix}manifest.json", workdir)
         if manifest_bytes is None:
@@ -276,11 +314,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--endpoint-url", required=True)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--require-newer",
+        action="store_true",
+        help="refuse unless the candidate is newer than the current release (automatic promotion)",
+    )
     args = parser.parse_args(argv)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         status, outputs = check_candidate(
-            args.bucket, args.release_id, make_run_aws(args.endpoint_url), Path(tmpdir)
+            args.bucket,
+            args.release_id,
+            make_run_aws(args.endpoint_url),
+            Path(tmpdir),
+            require_newer=args.require_newer,
         )
 
     if status == 0 and args.github_output is not None:

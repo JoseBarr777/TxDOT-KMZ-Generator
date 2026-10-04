@@ -134,8 +134,10 @@ def r2():
     return fake
 
 
-def _check(r2, tmp_path, capsys, release_id=RELEASE_ID):
-    status, outputs = promote_check.check_candidate(BUCKET, release_id, r2, tmp_path)
+def _check(r2, tmp_path, capsys, release_id=RELEASE_ID, require_newer=False):
+    status, outputs = promote_check.check_candidate(
+        BUCKET, release_id, r2, tmp_path, require_newer=require_newer
+    )
     out = capsys.readouterr().out
     errors = [line for line in out.splitlines() if line.startswith("::error::")]
     return status, outputs, errors
@@ -333,6 +335,86 @@ def test_all_candidate_failures_are_reported_together(tmp_path, capsys):
     assert any("artifact gate" in e for e in errors)
     assert any("no verification record" in e for e in errors)
     assert any("remote object count" in e for e in errors)
+
+
+# --- Automatic-promotion ordering (--require-newer) ------------------------------------
+#
+# RELEASE_ID (2026-09-29T1412Z) is newer than OTHER_ID (2026-09-20T0900Z).
+
+NEWER_ID = "2026-10-04T1500Z-bbbbbbb"
+
+
+def test_newer_candidate_is_promotable_in_automatic_mode(r2, tmp_path, capsys):
+    _set_current(r2, OTHER_ID)
+    status, outputs, errors = _check(r2, tmp_path, capsys, require_newer=True)
+    assert (status, errors) == (0, [])
+    assert outputs["current_release_id"] == OTHER_ID
+
+
+def test_older_candidate_is_refused_in_automatic_mode(r2, tmp_path, capsys):
+    _set_current(r2, NEWER_ID)
+    status, outputs, errors = _check(r2, tmp_path, capsys, require_newer=True)
+    assert (status, outputs) == (1, {})
+    assert errors == [
+        f"::error::Promotion refused: candidate release {RELEASE_ID} is not newer than "
+        f"current release {NEWER_ID} -- automatic promotion only moves forward"
+    ]
+    assert not any(PREFIX in " ".join(c) for c in r2.calls)  # refused before the candidate
+
+
+def test_equal_candidate_is_refused_as_already_current_in_automatic_mode(r2, tmp_path, capsys):
+    _set_current(r2, RELEASE_ID)
+    status, _, errors = _check(r2, tmp_path, capsys, require_newer=True)
+    assert status == 1
+    assert errors == [
+        f"::error::Promotion refused: release '{RELEASE_ID}' is already the current "
+        "release -- nothing to promote"
+    ]
+
+
+def test_same_minute_different_release_is_refused_in_automatic_mode(r2, tmp_path, capsys):
+    # Same timestamp, different SHA: order is unknowable, so not newer. The SHA
+    # ("fffffff" > "57cd153") must not decide it.
+    _set_current(r2, "2026-09-29T1412Z-0000000")
+    assert _check(r2, tmp_path, capsys, require_newer=True)[0] == 1
+    _set_current(r2, "2026-09-29T1412Z-fffffff")
+    assert _check(r2, tmp_path, capsys, require_newer=True)[0] == 1
+
+
+def test_older_candidate_is_promotable_in_manual_mode_for_rollback(r2, tmp_path, capsys):
+    _set_current(r2, NEWER_ID)
+    status, outputs, errors = _check(r2, tmp_path, capsys)
+    assert (status, errors) == (0, [])
+    assert outputs["current_release_id"] == NEWER_ID
+
+
+def test_first_promotion_is_allowed_in_automatic_mode(r2, tmp_path, capsys):
+    status, outputs, errors = _check(r2, tmp_path, capsys, require_newer=True)
+    assert (status, errors) == (0, [])
+    assert outputs["current_release_id"] == ""
+
+
+def test_incomparable_current_release_is_refused_in_automatic_mode(r2, tmp_path, capsys):
+    _set_current(r2, "test-2026-09-01")
+    status, _, errors = _check(r2, tmp_path, capsys, require_newer=True)
+    assert status == 1
+    assert "has no comparable timestamp" in errors[0]
+
+
+def test_ordering_guard_still_requires_every_other_check(r2, tmp_path, capsys):
+    _set_current(r2, OTHER_ID)
+    del r2.objects[RECORD_KEY]
+    status, _, errors = _check(r2, tmp_path, capsys, require_newer=True)
+    assert status == 1
+    assert any("no verification record" in e for e in errors)
+
+
+@pytest.mark.parametrize(("flag", "expected"), [([], 0), (["--require-newer"], 1)])
+def test_cli_require_newer_flag(r2, tmp_path, monkeypatch, flag, expected):
+    monkeypatch.setattr(promote_check, "make_run_aws", lambda endpoint: r2)
+    _set_current(r2, NEWER_ID)
+    args = ["--bucket", BUCKET, "--release-id", RELEASE_ID, "--endpoint-url", "https://e"]
+    assert promote_check.main(args + flag) == expected
 
 
 # --- CLI outputs ----------------------------------------------------------------------
