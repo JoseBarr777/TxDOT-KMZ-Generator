@@ -28,11 +28,24 @@ EXACTLY_ONE = [
 ]
 
 
-def _manifest(*, schema_version="2.1", district_zips=25, drop_type=None):
+def _manifest(*, schema_version="2.1", district_zips=25, drop_type=None, orphan_county=False):
     artifacts = [{"type": t, "path": p} for t, p in EXACTLY_ONE if t != drop_type]
-    artifacts += [
-        {"type": "district_zip", "path": f"offline/d{i:02d}.zip"} for i in range(district_zips)
-    ]
+    # One county per district ZIP, sharing its (district, district_number)
+    # identity, so the gate's identity-agreement check passes.
+    for i in range(district_zips):
+        identity = {"district": f"D{i:02d}", "district_number": i + 1}
+        artifacts.append({"type": "district_zip", "path": f"offline/d{i:02d}.zip", **identity})
+        artifacts.append({"type": "county_kmz", "path": f"districts/c{i:02d}.kmz", **identity})
+    if orphan_county:
+        artifacts.append(
+            {
+                "type": "county_kmz",
+                "path": "districts/smith.kmz",
+                "county": "Smith",
+                "district": "Tyler",
+                "district_number": 10,
+            }
+        )
     artifacts.append({"type": "statewide_zip", "path": "offline/texas_statewide.zip"})
     return {
         "schema_version": schema_version,
@@ -218,6 +231,10 @@ def test_legacy_test_prefix_release_is_refused_without_fallback(tmp_path, capsys
         (_manifest(schema_version="3.0"), "manifest schema major version 3"),
         (_manifest(district_zips=0), "expected 25 district_zip artifacts, found 0"),  # pre-Phase-3
         (_manifest(drop_type="admin_boundaries_kmz"), "expected 1 admin_boundaries_kmz"),
+        (
+            _manifest(orphan_county=True),
+            "county Smith / district Tyler / 10 has no matching district_zip",
+        ),
     ],
 )
 def test_gate_rejection_blocks_promotion(tmp_path, capsys, manifest, reason):
@@ -304,7 +321,7 @@ def test_missing_remote_artifact_is_refused(r2, tmp_path, capsys):
     del r2.objects[PREFIX + "offline/d03.zip"]
     status, _, errors = _check(r2, tmp_path, capsys)
     assert status == 1
-    assert any("remote object count 31 != expected 32" in e for e in errors)
+    assert any("remote object count 56 != expected 57" in e for e in errors)
 
 
 def test_all_candidate_failures_are_reported_together(tmp_path, capsys):

@@ -12,6 +12,9 @@ docs/ARTIFACT_CONTRACT.md):
   - explicit inventory cardinalities: exactly 25 district_zip, exactly 1
     statewide_zip, and exactly 1 each of master_kml and the four boundary
     KMZ types
+  - county/district identity agreement: unique (district, district_number)
+    per district_zip, every county_kmz's pair matching exactly one
+    district_zip, and no district_zip without a county_kmz
 
 The inventory counts are deliberately redundant with the manifest's own
 completeness verdict: the producer marks all of these types required, so
@@ -51,6 +54,11 @@ EXPECTED_STATEWIDE_ZIPS = 1
 
 DISTRICT_ZIP_TYPE = "district_zip"
 STATEWIDE_ZIP_TYPE = "statewide_zip"
+COUNTY_KMZ_TYPE = "county_kmz"
+
+# Cap on individually listed orphan counties, so a wholesale mismatch (e.g. a
+# manifest with no district ZIPs at all) does not bury the log.
+MAX_ORPHAN_COUNTIES_REPORTED = 10
 
 # Types a complete release carries exactly one of.
 EXACTLY_ONE_TYPES = (
@@ -125,6 +133,54 @@ def gate_failures(manifest: dict) -> list[str]:
             failures.append(
                 f"expected 1 {artifact_type} artifact, found {type_counts[artifact_type]}"
             )
+    failures += district_identity_failures(manifest["artifacts"])
+    return failures
+
+
+def _district_identity(artifact: dict) -> tuple:
+    return (artifact.get("district"), artifact.get("district_number"))
+
+
+def _format_identity(identity: tuple) -> str:
+    return f"{identity[0]} / {identity[1]}"
+
+
+def district_identity_failures(artifacts: list[dict]) -> list[str]:
+    """Why county_kmz and district_zip disagree on district identity (empty = agree).
+
+    Manifest data only: every district_zip has a unique (district,
+    district_number) pair, every county_kmz's pair matches exactly one
+    district_zip, and every district_zip is matched by at least one
+    county_kmz. Actual ZIP membership is validate-offline-packages' job.
+    """
+    zip_counts = Counter(_district_identity(a) for a in artifacts if a["type"] == DISTRICT_ZIP_TYPE)
+    counties = [a for a in artifacts if a["type"] == COUNTY_KMZ_TYPE]
+    referenced = Counter(_district_identity(c) for c in counties)
+
+    failures = [
+        f"duplicate {DISTRICT_ZIP_TYPE} identity: {_format_identity(identity)}"
+        for identity, count in zip_counts.items()
+        if count > 1
+    ]
+
+    orphans = [
+        f"county {c.get('county')} / district {_format_identity(_district_identity(c))} "
+        f"has no matching {DISTRICT_ZIP_TYPE}"
+        for c in counties
+        if _district_identity(c) not in zip_counts
+    ]
+    failures += orphans[:MAX_ORPHAN_COUNTIES_REPORTED]
+    if len(orphans) > MAX_ORPHAN_COUNTIES_REPORTED:
+        failures.append(
+            f"... and {len(orphans) - MAX_ORPHAN_COUNTIES_REPORTED} more county_kmz "
+            f"with no matching {DISTRICT_ZIP_TYPE}"
+        )
+
+    failures += [
+        f"{DISTRICT_ZIP_TYPE} {_format_identity(identity)} has no {COUNTY_KMZ_TYPE} members"
+        for identity in zip_counts
+        if identity not in referenced
+    ]
     return failures
 
 

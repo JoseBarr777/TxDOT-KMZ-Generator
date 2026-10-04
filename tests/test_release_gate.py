@@ -4,7 +4,9 @@ The gate first requires a supported manifest schema (a "MAJOR.MINOR" string,
 major 2), then checks the validation summary (status, 25/25 districts,
 254/254 counties, zero required missing/invalid) and, independently, counts
 artifact types in the inventory (exactly 25 district_zip, exactly 1
-statewide_zip, exactly 1 each of master_kml and the four boundary KMZs).
+statewide_zip, exactly 1 each of master_kml and the four boundary KMZs),
+and requires county_kmz and district_zip to agree on (district,
+district_number) identity.
 """
 
 import json
@@ -52,9 +54,28 @@ def _manifest(
         {"type": t, "path": f"{t}-{i}"} for t in EXACTLY_ONE_TYPES for i in range(counts[t])
     ]
     artifacts += [
-        {"type": "district_zip", "path": f"offline/districts/d{i:02d}.zip"}
+        {
+            "type": "district_zip",
+            "path": f"offline/districts/d{i:02d}.zip",
+            "district": f"D{i:02d}",
+            "district_number": i + 1,
+        }
         for i in range(district_zips)
     ]
+    # 254 counties spread round-robin over the district ZIPs that exist, so
+    # every identity is matched and no ZIP is empty; the county/district
+    # identity checks are exercised by their own tests below.
+    if district_zips:
+        artifacts += [
+            {
+                "type": "county_kmz",
+                "path": f"districts/c{i:03d}.kmz",
+                "county": f"C{i:03d}",
+                "district": f"D{i % district_zips:02d}",
+                "district_number": i % district_zips + 1,
+            }
+            for i in range(254)
+        ]
     artifacts += [
         {"type": "statewide_zip", "path": f"offline/statewide-{i}.zip"}
         for i in range(statewide_zips)
@@ -79,7 +100,7 @@ def test_complete_manifest_passes(tmp_path, capsys):
     assert "  statewide_zip:      1/1" in out
     for artifact_type in EXACTLY_ONE_TYPES:
         assert f"  {artifact_type}: 1/1" in out
-    assert "  artifact_count:     31" in out
+    assert "  artifact_count:     285" in out
     assert (
         "Release gate passed: complete statewide release "
         "(25/25 districts, 254/254 counties, 25 district ZIPs, 1 statewide ZIP, "
@@ -181,7 +202,15 @@ def test_zip_counts_are_by_type_not_path():
     # Other artifact types, including one that merely lives under offline/,
     # do not count toward the ZIP contract.
     manifest = _manifest(district_zips=24)
-    manifest["artifacts"].append({"type": "county_kmz", "path": "offline/districts/extra.zip"})
+    manifest["artifacts"].append(
+        {
+            "type": "county_kmz",
+            "path": "offline/districts/extra.zip",
+            "county": "Extra",
+            "district": "D00",
+            "district_number": 1,
+        }
+    )
     assert gate.gate_failures(manifest) == ["expected 25 district_zip artifacts, found 24"]
 
 
@@ -270,3 +299,96 @@ def test_unknown_major_is_rejected_before_its_structure_is_read(tmp_path, capsys
     out = capsys.readouterr().out
     assert "Manifest validation summary" not in out
     assert "not supported" in out
+
+
+# --- County/district identity agreement ----------------------------------------
+#
+# The frontend joins county_kmz.district_number to district_zip.district_number,
+# so the gate requires the manifest's two views of district identity to agree.
+# Actual ZIP membership is validate-offline-packages' job, not the gate's.
+
+
+def _of_type(manifest, artifact_type):
+    return [a for a in manifest["artifacts"] if a["type"] == artifact_type]
+
+
+def test_matching_identities_pass_on_a_realistic_manifest():
+    manifest = _manifest()
+    zips = _of_type(manifest, "district_zip")
+    zips[0].update(district="Tyler", district_number=10)
+    for county in _of_type(manifest, "county_kmz"):
+        if county["district"] == "D00":
+            county.update(district="Tyler", district_number=10)
+    assert gate.gate_failures(manifest) == []
+
+
+def test_orphan_county_fails():
+    manifest = _manifest()
+    county = _of_type(manifest, "county_kmz")[0]
+    county.update(county="Smith", district="Tyler", district_number=10)
+    assert gate.gate_failures(manifest) == [
+        "county Smith / district Tyler / 10 has no matching district_zip"
+    ]
+
+
+def test_district_number_mismatch_fails():
+    manifest = _manifest()
+    county = _of_type(manifest, "county_kmz")[0]
+    _of_type(manifest, "district_zip")[0].update(district="Tyler", district_number=11)
+    for c in _of_type(manifest, "county_kmz"):
+        if c["district"] == "D00":
+            c.update(district="Tyler", district_number=11)
+    county.update(county="Smith", district="Tyler", district_number=10)
+    assert gate.gate_failures(manifest) == [
+        "county Smith / district Tyler / 10 has no matching district_zip"
+    ]
+
+
+def test_district_name_mismatch_with_same_number_fails():
+    manifest = _manifest()
+    _of_type(manifest, "district_zip")[0].update(district="Some Other Name", district_number=10)
+    for c in _of_type(manifest, "county_kmz"):
+        if c["district"] == "D00":
+            c.update(district="Some Other Name", district_number=10)
+    county = _of_type(manifest, "county_kmz")[0]
+    county.update(county="Smith", district="Tyler", district_number=10)
+    assert gate.gate_failures(manifest) == [
+        "county Smith / district Tyler / 10 has no matching district_zip"
+    ]
+
+
+def test_duplicate_district_zip_identity_fails():
+    manifest = _manifest()
+    zips = _of_type(manifest, "district_zip")
+    # D01's counties move to D00 so the only failure is the duplicate itself.
+    for c in _of_type(manifest, "county_kmz"):
+        if c["district"] == "D01":
+            c.update(district="D00", district_number=1)
+    zips[1].update(district="D00", district_number=1)
+    assert gate.gate_failures(manifest) == ["duplicate district_zip identity: D00 / 1"]
+
+
+def test_district_zip_without_counties_fails():
+    manifest = _manifest()
+    for c in _of_type(manifest, "county_kmz"):
+        if c["district"] == "D24":
+            c.update(district="D00", district_number=1)
+    assert gate.gate_failures(manifest) == ["district_zip D24 / 25 has no county_kmz members"]
+
+
+def test_orphan_county_reports_are_capped(tmp_path, capsys):
+    # A manifest whose ZIP identities are absent entirely (e.g. pre-2.1) must
+    # not print one error per county.
+    manifest = _manifest()
+    for z in _of_type(manifest, "district_zip"):
+        del z["district"], z["district_number"]
+    failures = gate.district_identity_failures(manifest["artifacts"])
+    assert failures[0] == "duplicate district_zip identity: None / None"
+    orphans = [f for f in failures if f.endswith("has no matching district_zip")]
+    assert len(orphans) == gate.MAX_ORPHAN_COUNTIES_REPORTED
+    assert "... and 244 more county_kmz with no matching district_zip" in failures
+    assert failures[-1] == "district_zip None / None has no county_kmz members"
+
+    path = _write(tmp_path, manifest)
+    assert gate.main(["--manifest", str(path)]) == 1
+    assert "Release gate passed" not in capsys.readouterr().out

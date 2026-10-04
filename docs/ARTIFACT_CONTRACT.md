@@ -154,6 +154,7 @@ requires all of the following:
 | exactly 25 `district_zip` | counted from `artifacts` |
 | exactly 1 `statewide_zip` | counted from `artifacts` |
 | exactly 1 each of `master_kml`, `district_boundaries_kmz`, `county_boundaries_kmz`, `city_boundaries_kmz`, `admin_boundaries_kmz` | counted from `artifacts` |
+| each `district_zip` has a unique (`district`, `district_number`); each `county_kmz`'s pair matches exactly one `district_zip`; every `district_zip` is matched by at least one `county_kmz` | `artifacts` identity fields (actual ZIP membership is checked by `validate-offline-packages`) |
 
 `single_file_kmz` is optional and never required.
 
