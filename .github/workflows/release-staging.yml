@@ -1,12 +1,17 @@
 name: Release (Staging)
 
-# v1: staging-only release. Builds the statewide artifact set, gates on a
-# complete manifest, and uploads to a versioned/immutable release prefix in
-# R2. Deployment state (whether a release is live) belongs in current.json,
-# not in this prefix name, so the prefix names artifact identity only.
-# Deliberately does NOT touch current.json or promote a production release --
-# that is a later phase (see release-promote.yml) once this staging path has
-# been exercised manually.
+# Builds the statewide artifact set, gates on a complete manifest, uploads it
+# to a versioned/immutable release prefix in R2, verifies it remotely and
+# writes its verification record (job `release`). Deployment state (whether a
+# release is live) belongs in current.json, not in this prefix name, so the
+# prefix names artifact identity only.
+#
+# On main only, a fully successful `release` job is then promoted
+# automatically (job `promote`) by calling release-promote.yml -- the same
+# job manual promotion runs -- with require_newer: true, so it only ever moves
+# current.json forward. Runs from any other branch stage and verify but never
+# touch current.json. Manual promotion/rollback stays release-promote.yml's
+# workflow_dispatch.
 on:
   workflow_dispatch:
 
@@ -20,6 +25,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The one value promotion needs: the release this run uploaded and
+    # verified, straight from "Compute release ID" -- never recomputed.
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -329,3 +338,20 @@ jobs:
             --cache-control "no-cache" \
             --only-show-errors
           echo "Verification record written: verified/${RELEASE_ID}.json"
+
+  promote:
+    # needs: release with no status function in `if:` means this runs only
+    # when every step of `release` succeeded -- through the verification
+    # record upload. Never add always()/failure()/cancelled() here.
+    needs: release
+    if: github.ref == 'refs/heads/main'
+    # The called workflow owns promotion: candidate check, current.json
+    # write, read-back, and the txdot-kmz-promote concurrency it shares with
+    # manual promotion. promote_check.py re-proves the release was verified
+    # (verified/<release_id>.json bound to the remote manifest) regardless.
+    uses: ./.github/workflows/release-promote.yml
+    with:
+      release_id: ${{ needs.release.outputs.release_id }}
+      confirm_release_id: ${{ needs.release.outputs.release_id }}
+      require_newer: true
+    secrets: inherit
