@@ -11,6 +11,14 @@ name: Release (Promote)
 #   manifest bytes, and the prefix holds exactly artifacts + 1 objects.
 # Rollback is promoting an older release that still satisfies all of that.
 #
+# Two triggers share the one job below. workflow_dispatch is manual promotion
+# (and rollback): require_newer is not an input there, so it is always off.
+# workflow_call is for a caller that promotes automatically: require_newer
+# defaults to true, adding promote_check.py --require-newer so a stale rerun
+# can never replace a newer current release. The mode comes only from that
+# input -- never from github.event_name, which in a called workflow is the
+# caller's event. A caller needs `secrets: inherit` for the R2 credentials.
+#
 # The release artifacts under releases/**/ are never rebuilt, renamed,
 # copied, or moved by this workflow; the only mutating R2 call anywhere in
 # this file is the PutObject of current.json itself (via `aws s3 cp`). There
@@ -27,10 +35,21 @@ on:
         description: "Re-type the release_id above to confirm"
         required: true
         type: string
-
-concurrency:
-  group: txdot-kmz-promote
-  cancel-in-progress: false
+  workflow_call:
+    inputs:
+      release_id:
+        description: "Release ID to promote"
+        required: true
+        type: string
+      confirm_release_id:
+        description: "Same value as release_id (the confirmation check still runs)"
+        required: true
+        type: string
+      require_newer:
+        description: "Refuse unless the release is newer than the current one"
+        required: false
+        type: boolean
+        default: true
 
 # Read-only repository access, for the release tooling in scripts/release/.
 permissions:
@@ -39,6 +58,12 @@ permissions:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    # Job-level, not workflow-level, so manual dispatches and workflow_call
+    # runs (inside a caller's own run) serialize on the same group: promotion
+    # reads current.json and later writes it, so two must never interleave.
+    concurrency:
+      group: txdot-kmz-promote
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -137,12 +162,32 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_R2_BUCKET: ${{ vars.CF_R2_BUCKET }}
           RELEASE_ID: ${{ steps.validate_inputs.outputs.release_id }}
+          # "true"/"false" from workflow_call's boolean input; empty under
+          # workflow_dispatch, which has no such input (manual: off).
+          REQUIRE_NEWER: ${{ inputs.require_newer }}
         run: |
           set -euo pipefail
+
+          ordering_flag=""
+          case "${REQUIRE_NEWER}" in
+            true)
+              ordering_flag="--require-newer"
+              echo "Mode: automatic (candidate must be newer than the current release)"
+              ;;
+            false | "")
+              echo "Mode: manual (older verified releases may be promoted -- rollback)"
+              ;;
+            *)
+              echo "::error::unexpected require_newer value '${REQUIRE_NEWER}'"
+              exit 1
+              ;;
+          esac
+
           python3 scripts/release/promote_check.py \
             --bucket "${CF_R2_BUCKET}" \
             --release-id "${RELEASE_ID}" \
             --endpoint-url "https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            ${ordering_flag:+"${ordering_flag}"} \
             --github-output "${GITHUB_OUTPUT}"
 
       - name: Construct and validate current.json locally

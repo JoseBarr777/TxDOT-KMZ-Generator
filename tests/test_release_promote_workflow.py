@@ -1,14 +1,18 @@
-"""release-promote.yml wiring: manual confirmed input, every candidate check
-(scripts/release/promote_check.py) before the one current.json write, and a
-read-back after it.
+"""release-promote.yml wiring: manual confirmed input, a reusable
+workflow_call path for automatic promotion (--require-newer), every candidate
+check (scripts/release/promote_check.py) before the one current.json write,
+and a read-back after it.
 
-Structural checks on the workflow file; nothing is executed against R2.
+Structural checks on the workflow file; nothing is executed against R2. The
+candidate-check step's shell is run once against a stub python3 to prove when
+--require-newer is passed.
 """
 
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -43,17 +47,111 @@ def _current_json_writes(steps):
     ]
 
 
-def test_promotion_is_manual_with_confirmation():
+def _triggers():
     workflow = _workflow()
-    trigger = workflow.get("on", workflow.get(True))
-    assert list(trigger) == ["workflow_dispatch"]
-    inputs = trigger["workflow_dispatch"]["inputs"]
+    return workflow.get("on", workflow.get(True))
+
+
+def test_promotion_is_manual_or_reusable_only():
+    assert list(_triggers()) == ["workflow_dispatch", "workflow_call"]
+
+
+def test_manual_promotion_requires_confirmation_and_cannot_require_newer():
+    inputs = _triggers()["workflow_dispatch"]["inputs"]
+    # No require_newer here: a manual dispatch is always rollback-capable.
+    assert set(inputs) == {"release_id", "confirm_release_id"}
     assert inputs["release_id"]["required"] and inputs["confirm_release_id"]["required"]
     steps = _steps()
     validate = steps[_index(steps, name="Validate release_id input")]
     assert '"${RELEASE_ID}" != "${CONFIRM_RELEASE_ID}"' in validate["run"]
     # Inputs reach the script only through env, never ${{ }} in run:.
     assert all("${{" not in s.get("run", "") for s in steps)
+
+
+def test_reusable_promotion_inputs_default_to_require_newer():
+    inputs = _triggers()["workflow_call"]["inputs"]
+    assert set(inputs) == {"release_id", "confirm_release_id", "require_newer"}
+    for name in ("release_id", "confirm_release_id"):
+        assert inputs[name] == {**inputs[name], "required": True, "type": "string"}
+    # A caller that omits it gets the strict (automatic) mode, not rollback.
+    assert inputs["require_newer"]["type"] == "boolean"
+    assert inputs["require_newer"]["required"] is False
+    assert inputs["require_newer"]["default"] is True
+
+
+def test_both_triggers_run_the_same_single_job():
+    assert list(_workflow()["jobs"]) == ["promote"]
+
+
+def test_manual_and_reusable_promotion_share_one_job_level_concurrency_group():
+    # Job-level so a workflow_call run (inside its caller's run) and a manual
+    # dispatch serialize on the same group.
+    assert "concurrency" not in _workflow()
+    assert _workflow()["jobs"]["promote"]["concurrency"] == {
+        "group": "txdot-kmz-promote",
+        "cancel-in-progress": False,
+    }
+
+
+def test_mode_comes_from_the_input_never_from_the_triggering_event():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    steps = _steps()
+    check = steps[_index(steps, run="scripts/release/promote_check.py")]
+    assert check["env"]["REQUIRE_NEWER"] == "${{ inputs.require_newer }}"
+    for step in steps:
+        assert "event_name" not in str(step)
+    assert "github.event_name" not in text.split("\non:", 1)[1]
+
+
+def _run_candidate_check(tmp_path, require_newer):
+    """Run the candidate-check step's shell with python3 stubbed to record argv."""
+    steps = _steps()
+    check = steps[_index(steps, run="scripts/release/promote_check.py")]
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    argv_file = tmp_path / "argv"
+    stub = stub_dir / "python3"
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_file}"\n')
+    stub.chmod(0o755)
+    env = {
+        "PATH": f"{stub_dir}:/usr/bin:/bin",
+        "CF_R2_BUCKET": "bucket",
+        "CF_ACCOUNT_ID": "acct",
+        "RELEASE_ID": "2026-09-29T1412Z-57cd153",
+        "REQUIRE_NEWER": require_newer,
+        "GITHUB_OUTPUT": str(tmp_path / "out"),
+    }
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", check["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    argv = argv_file.read_text().splitlines() if argv_file.exists() else None
+    return result, argv
+
+
+@pytest.mark.parametrize(
+    ("require_newer", "flagged"),
+    [("true", True), ("false", False), ("", False)],  # "" = workflow_dispatch
+)
+def test_require_newer_is_passed_only_when_requested(tmp_path, require_newer, flagged):
+    result, argv = _run_candidate_check(tmp_path, require_newer)
+    assert result.returncode == 0, result.stderr
+    assert argv[0] == "scripts/release/promote_check.py"
+    assert ("--require-newer" in argv) is flagged
+    # Every pre-existing argument is still passed.
+    assert argv[argv.index("--release-id") + 1] == "2026-09-29T1412Z-57cd153"
+    assert argv[argv.index("--bucket") + 1] == "bucket"
+    assert argv[argv.index("--github-output") + 1] == str(tmp_path / "out")
+    assert "" not in argv  # an absent flag leaves no empty argument behind
+
+
+def test_unexpected_require_newer_value_fails_closed(tmp_path):
+    result, argv = _run_candidate_check(tmp_path, "yes")
+    assert result.returncode == 1
+    assert argv is None  # promote_check never ran
+    assert "unexpected require_newer value 'yes'" in result.stdout
 
 
 def test_repository_is_checked_out_first_with_read_only_access():
